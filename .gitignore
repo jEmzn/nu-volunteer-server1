@@ -4,6 +4,6 @@ coverage/
 .env
 *.log
 .dev-db/
-./CLAUDE.md
+CLAUDE.md
 .claude/
-./BACKEND_SPEC.md
+BACKEND_SPEC.md
