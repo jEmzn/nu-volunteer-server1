@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+.env
+*.log
+.dev-db/
+./CLAUDE.md
+.claude/
+./BACKEND_SPEC.md
