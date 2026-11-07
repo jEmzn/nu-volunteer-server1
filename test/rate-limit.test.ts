@@ -3,7 +3,7 @@ import { makeDynamicToken } from '../src/modules/qr/qr-token';
 import { api, http, newActivity, ORG_A, QR_SECRET, resetDb, startApp, student, sup } from './helpers';
 
 let app: NestExpressApplication;
-const LIMITS = { RATE_AUTH_SUP: process.env.RATE_AUTH_SUP, RATE_AUTH_STUDENT: process.env.RATE_AUTH_STUDENT, RATE_CLAIMS: process.env.RATE_CLAIMS };
+const LIMITS = { RATE_AUTH_SUP: process.env.RATE_AUTH_SUP, RATE_AUTH_STUDENT: process.env.RATE_AUTH_STUDENT, RATE_CLAIMS: process.env.RATE_CLAIMS, RATE_WRITES: process.env.RATE_WRITES };
 
 beforeEach(async () => {
   // Fresh app per test: the counters live in the app. Generous while setting up, tightened by each test.
@@ -39,6 +39,27 @@ describe('rate limits', () => {
     process.env.RATE_AUTH_STUDENT = '3';
     for (let i = 0; i < 3; i++) await http(app).post('/auth/student').send({ studentId: '65000001', name: 'ก' }).expect(200);
     await http(app).post('/auth/student').send({ studentId: '65000001', name: 'ก' }).expect(429);
+  });
+
+  it('supervisor sign-in stays per IP when a token is sent, so minting student tokens does not buy more guesses', async () => {
+    const tokens = await Promise.all(Array.from({ length: 6 }, (_, i) => student(app, String(65000010 + i), 'ก')));
+    delete process.env.RATE_AUTH_SUP;
+    for (const t of tokens.slice(0, 5)) await api(app, t).post('/auth/sup', { supName: 'ก', orgCode: 'WRONG' }).expect(401);
+    await api(app, tokens[5]).post('/auth/sup', { supName: 'ก', orgCode: ORG_A }).expect(429);
+  });
+
+  it('other writes: 60 a minute per user and endpoint, reads are not counted', async () => {
+    const a = await student(app, '65000001', 'ก');
+    const b = await student(app, '65000002', 'ข');
+    delete process.env.RATE_WRITES;
+    const notice = { kind: 'open', title: 'เปิดรับ' };
+    for (let i = 0; i < 60; i++) await api(app, a).post('/students/me/notices', notice).expect(201);
+    const res = await api(app, a).post('/students/me/notices', notice).expect(429);
+    expect(res.body.error).toEqual({ code: 'RATE_LIMITED', message: 'เรียกถี่เกินไป กรุณารอสักครู่' });
+    // Another endpoint, another user and reads all still work.
+    await api(app, a).post('/students/me/notices/read').expect(200);
+    await api(app, b).post('/students/me/notices', notice).expect(201);
+    for (let i = 0; i < 70; i++) await api(app, a).get('/students/me/notices').expect(200);
   });
 
   it('claims: 10 a minute per student, not per IP', async () => {

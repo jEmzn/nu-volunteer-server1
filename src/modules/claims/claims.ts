@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, Injectable, Module, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, HttpCode, Injectable, Module, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { CurrentUser, Roles, StudentUser } from '../../common/auth';
@@ -7,7 +7,7 @@ import { ACTIVITY_RULE_COLUMNS, DbService, lockActivity, Row } from '../../commo
 import { ApiError, rosterLocked } from '../../common/errors';
 import { MAX_TIME_MS, Num, Str } from '../../common/fields';
 import { toCredit } from '../../common/mappers';
-import { CLAIMS_LIMIT, PerUserThrottlerGuard } from '../../common/rate-limit';
+import { CLAIMS_LIMIT } from '../../common/rate-limit';
 import { checkTime, matchesMode, parseToken } from '../qr/qr-token';
 import { RealtimeService, rooms } from '../realtime/realtime';
 import { writeCredit } from './credit-writer';
@@ -94,7 +94,6 @@ export class ClaimsController {
   @Post()
   @HttpCode(200)
   @Roles('student')
-  @UseGuards(PerUserThrottlerGuard)
   @Throttle(CLAIMS_LIMIT)
   @ApiOperation({ summary: 'เช็คชื่อด้วย QR: ส่ง token และพิกัดดิบ server ตรวจและติด flag เอง' })
   claim(@CurrentUser() user: StudentUser, @Body() dto: ClaimDto) {

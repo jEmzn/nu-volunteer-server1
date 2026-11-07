@@ -1,7 +1,7 @@
-import { Body, Controller, HttpCode, Injectable, Module, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, HttpCode, Injectable, Module, Post } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import { Throttle } from '@nestjs/throttler';
 import { Public, StudentUser, SupUser } from '../../common/auth';
 import { DbService } from '../../common/db.service';
 import { ApiError, notFound } from '../../common/errors';
@@ -59,7 +59,6 @@ export class AuthController {
   @Post('student')
   @HttpCode(200)
   @Public()
-  @UseGuards(ThrottlerGuard)
   @Throttle(AUTH_STUDENT_LIMIT)
   @ApiOperation({ summary: 'นิสิตเข้าใช้งาน: รหัส 8 หลัก ครั้งแรกต้องมีชื่อ; ได้ token อายุ 30 วัน' })
   student(@Body() dto: StudentLoginDto) {
@@ -69,7 +68,6 @@ export class AuthController {
   @Post('sup')
   @HttpCode(200)
   @Public()
-  @UseGuards(ThrottlerGuard)
   @Throttle(AUTH_SUP_LIMIT)
   @ApiOperation({ summary: 'ผู้ดูแลเข้าใช้งาน: ชื่อ + รหัสหน่วยงาน (ไม่สนตัวพิมพ์); ได้ token อายุ 12 ชั่วโมง' })
   sup(@Body() dto: SupLoginDto) {

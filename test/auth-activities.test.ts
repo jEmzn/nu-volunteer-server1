@@ -85,6 +85,17 @@ describe('the API as a whole', () => {
     expect(res.body.components.schemas.ClaimDto.properties.token).toBeDefined();
   });
 
+  it('does not serve the OpenAPI document unless API_DOCS=1', async () => {
+    delete process.env.API_DOCS;
+    const other = await startApp();
+    try {
+      await http(other).get('/api/docs-json').expect(404);
+    } finally {
+      process.env.API_DOCS = '1';
+      await other.close();
+    }
+  });
+
   it('closes routes by default', async () => {
     const res = await http(app).get('/students/me/credits').expect(401);
     expect(res.body.error.code).toBe('UNAUTHENTICATED');

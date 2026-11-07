@@ -7,3 +7,4 @@ coverage/
 CLAUDE.md
 .claude/
 BACKEND_SPEC.md
+docs/LOAD-TEST-TODO.md

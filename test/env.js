@@ -10,4 +10,6 @@ Object.assign(process.env, {
   RATE_AUTH_SUP: '100000',
   RATE_AUTH_STUDENT: '100000',
   RATE_CLAIMS: '100000',
+  RATE_WRITES: '100000',
+  API_DOCS: '1',
 });

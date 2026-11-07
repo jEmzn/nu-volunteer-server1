@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { AuditInterceptor } from './common/audit.interceptor';
 import { AuthGuard } from './common/auth';
 import { AppConfig } from './common/config';
+import { RateLimitGuard, WRITE_LIMIT } from './common/rate-limit';
 import { DbService } from './common/db.service';
 import { ActivitiesModule } from './modules/activities/activities';
 import { AuthModule } from './modules/auth/auth';
@@ -27,8 +28,8 @@ import { TemplatesModule } from './modules/templates/templates';
 const jwt = JwtModule.registerAsync({
   useFactory: () => ({ secret: process.env.JWT_SECRET, verifyOptions: { algorithms: ['HS256'] }, signOptions: { algorithm: 'HS256' } }),
 });
-// Limits are set per route; this default only exists because the module requires one.
-const throttler = ThrottlerModule.forRoot([{ ttl: 60_000, limit: 1000 }]);
+// The default applies to every write; sign-in and claims override it per route.
+const throttler = ThrottlerModule.forRoot({ throttlers: [WRITE_LIMIT], errorMessage: 'เรียกถี่เกินไป กรุณารอสักครู่' });
 
 @Global()
 @Module({
@@ -74,6 +75,8 @@ export class CoreModule {}
   ],
   providers: [
     { provide: APP_GUARD, useClass: AuthGuard },
+    // After AuthGuard, so writes are counted per user.
+    { provide: APP_GUARD, useClass: RateLimitGuard },
     { provide: APP_INTERCEPTOR, useClass: AuditInterceptor },
   ],
 })

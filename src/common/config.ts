@@ -24,6 +24,8 @@ export class AppConfig {
   readonly tzDisplay: string;
   readonly trustProxy: number;
   readonly dbPoolMax: number;
+  /** /api/docs is off unless API_DOCS=1, so production does not publish the API map. */
+  readonly apiDocs: boolean;
 
   constructor() {
     const env = process.env;
@@ -39,5 +41,6 @@ export class AppConfig {
     this.tzDisplay = env.TZ_DISPLAY ?? 'Asia/Bangkok';
     this.trustProxy = Number(env.TRUST_PROXY ?? 0);
     this.dbPoolMax = Number(env.DB_POOL_MAX ?? 20);
+    this.apiDocs = env.API_DOCS === '1';
   }
 }

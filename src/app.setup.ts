@@ -55,6 +55,7 @@ export function configureApp(app: NestExpressApplication) {
     }),
   );
 
+  if (!config.apiDocs) return;
   const doc = new DocumentBuilder()
     .setTitle('NU Volunteer API')
     .setDescription('เอกสารฉบับเต็มอยู่ที่ docs/API-CONTRACT.md')
