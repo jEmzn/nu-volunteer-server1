@@ -24,6 +24,13 @@ export type WriteResult = { ok: true; row: Row } | { ok: false; row: Row };
 export const creditNotice = (c: PoolClient, activity: Row, studentId: string, hours: number) =>
   c.query(`INSERT INTO notices (student_id, kind, title, body, activity_id) VALUES ($1, 'credit', $2, $3, $4)`, [studentId, `ได้รับ ${fmtHours(hours)} ชั่วโมง`, activity.title, activity.id]);
 
+/** Tells the student when hours they already heard about change. The first hours above 0 read as "ได้รับ". */
+export async function hoursChangedNotice(c: PoolClient, activity: Row, studentId: string, oldHours: number, newHours: number) {
+  if (newHours === oldHours) return;
+  if (oldHours === 0) return creditNotice(c, activity, studentId, newHours);
+  await c.query(`INSERT INTO notices (student_id, kind, title, body, activity_id) VALUES ($1, 'credit', $2, $3, $4)`, [studentId, `ชั่วโมงเปลี่ยนเป็น ${fmtHours(newHours)} ชั่วโมง`, activity.title, activity.id]);
+}
+
 /**
  * The shared credit write, for QR and manual alike. Must run in a transaction that already locked the activity
  * row (spec 8.3 steps 3 to 8). A credit of 0 hours gets no notice: "ได้รับ 0 ชั่วโมง" would only mislead.

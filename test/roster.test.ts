@@ -527,6 +527,14 @@ describe('editing hours', () => {
   it('answers 404 for someone without hours', async () => {
     await api(app, owner).patch(`/activities/${id}/credits/65000002`, { hours: 3, reason: 'x' }).expect(404);
   });
+
+  it('tells the student when the hours change, and not when they stay the same', async () => {
+    await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 3, reason: 'กลับก่อน' }).expect(200);
+    await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 3, reason: 'กลับก่อนเวลา' }).expect(200);
+    await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 0, reason: 'ไม่ได้ทำงาน' }).expect(200);
+    const titles = (await noticesOf(app, '65000001')).map((n) => n.title);
+    expect(titles).toEqual(['ได้รับ 6 ชั่วโมง', 'ชั่วโมงเปลี่ยนเป็น 3 ชั่วโมง', 'ชั่วโมงเปลี่ยนเป็น 0 ชั่วโมง']);
+  });
 });
 
 describe('removing', () => {
@@ -597,14 +605,15 @@ describe('bottles', () => {
     expect((await add(1000).expect(200)).body).toMatchObject({ items: 1000, hours: 3 });
   });
 
-  it('tells the student once, when the hours first go above 0', async () => {
+  it('tells the student when the hours first go above 0, and again each time they change', async () => {
     await add(19).expect(200);
     expect(await noticesOf(app, '65000001')).toHaveLength(0);
     await add(1).expect(200);
-    await add(20).expect(200);
+    await add(5).expect(200);
+    await add(15).expect(200);
     const notices = await noticesOf(app, '65000001');
-    expect(notices).toHaveLength(1);
-    expect(notices[0]).toMatchObject({ kind: 'credit', title: 'ได้รับ 1 ชั่วโมง' });
+    expect(notices.map((n) => n.title)).toEqual(['ได้รับ 1 ชั่วโมง', 'ชั่วโมงเปลี่ยนเป็น 2 ชั่วโมง']);
+    expect(notices.every((n) => n.kind === 'credit')).toBe(true);
   });
 
   it('counts every bottle when two requests arrive at once', async () => {
@@ -771,12 +780,14 @@ describe('who can read what', () => {
     await api(app, peer).get(`/activities/${id}/registrations/65000002`).expect(404);
   });
 
-  it('students see the sign-in sheet without others device and position', async () => {
+  it('students see the sign-in sheet with only who and when for others', async () => {
     const s = await student(app, '65000002', 'ข');
-    await dbOf(app).query(`UPDATE credits SET device_id = 'secret-device', distance = 5, accuracy = 7 WHERE activity_id = $1`, [id]);
+    await dbOf(app).query(
+      `UPDATE credits SET device_id = 'secret-device', distance = 5, accuracy = 7, flags = '{location,device}', reason = 'ป่วย', edited_by = 'ผู้ดูแล ก', ref = 'ABCD1234', items = 3 WHERE activity_id = $1`,
+      [id],
+    );
     const rows = (await api(app, s).get(`/activities/${id}/credits`).expect(200)).body;
-    expect(rows[0]).toMatchObject({ studentId: '65000001', name: 'ก', hours: 6 });
-    for (const k of ['deviceId', 'distance', 'accuracy']) expect(rows[0]).not.toHaveProperty(k);
+    expect(rows[0]).toEqual({ studentId: '65000001', name: 'ก', hours: 6, fullHours: 6, at: expect.any(Number), method: 'manual' });
     const mine = (await api(app, await student(app, '65000001', 'ก')).get(`/activities/${id}/credits`).expect(200)).body;
     expect(mine[0]).toMatchObject({ deviceId: 'secret-device', distance: 5, accuracy: 7 });
     expect((await api(app, owner).get(`/activities/${id}/credits`).expect(200)).body[0].deviceId).toBe('secret-device');

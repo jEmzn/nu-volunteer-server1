@@ -5,7 +5,7 @@ import { CurrentUser, Roles, StudentUser } from '../../common/auth';
 import { AppConfig } from '../../common/config';
 import { ACTIVITY_RULE_COLUMNS, DbService, lockActivity, Row } from '../../common/db.service';
 import { ApiError, rosterLocked } from '../../common/errors';
-import { MAX_TIME_MS, Num, Str } from '../../common/fields';
+import { Bool, MAX_TIME_MS, Num, Str } from '../../common/fields';
 import { toCredit } from '../../common/mappers';
 import { CLAIMS_LIMIT } from '../../common/rate-limit';
 import { checkTime, matchesMode, parseToken } from '../qr/qr-token';
@@ -19,12 +19,20 @@ export class ClaimDto {
   @Num({ optional: true, min: -180, max: 180 }) lng?: number | null;
   @Num({ optional: true, min: 0 }) accuracy?: number | null;
   @Str({ optional: true, max: 100 }) deviceId?: string | null;
-  /** Server-time ms of a scan the phone kept while offline. Not always whole: the web's clock offset can be fractional. */
+  /** Server-time ms when the claim link was opened (or a kept offline scan). Not always whole: the web's clock offset can be fractional. */
   @Num({ optional: true, min: 0, max: MAX_TIME_MS }) scannedAt?: number | null;
+  /** The phone kept this scan while it was offline and is sending it now. */
+  @Bool({ optional: true }) offline?: boolean | null;
 }
 
 const invalid = () => new ApiError(400, 'QR_INVALID', 'QR นี้ใช้รับชั่วโมงไม่ได้');
 const TIME_MESSAGE = { QR_EXPIRED: 'QR หมดอายุ', QR_EARLY: 'ยังไม่ถึงเวลารับชั่วโมง', QR_LATE: 'หมดเวลารับชั่วโมงแล้ว' };
+
+/**
+ * The web sends the moment the claim link was opened with every claim, so a student filling in the form keeps a fresh
+ * QR. A scan is flagged as sent afterwards when the phone says it kept it offline, or when it arrives later than this.
+ */
+const OFFLINE_FLAG_MS = 3 * 60_000;
 
 const times = (a: Row) => ({ start: (a.start_at as Date).getTime(), end: (a.end_at as Date).getTime() });
 
@@ -72,7 +80,7 @@ export class ClaimsService {
         hours: Number(activity.hours),
         method: 'qr',
         at: at ?? now,
-        flags: at === null ? location.flags : [...location.flags, 'offline'],
+        flags: at !== null && (dto.offline === true || now - at > OFFLINE_FLAG_MS) ? [...location.flags, 'offline'] : location.flags,
         distance: location.distance,
         accuracy: location.accuracy,
         deviceId: dto.deviceId || undefined,

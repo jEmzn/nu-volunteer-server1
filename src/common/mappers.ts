@@ -97,11 +97,15 @@ export const toCredit = (r: Row) =>
 
 export const toMyCredit = (r: Row) => ({ ...toCredit(r), activityId: r.activity_id });
 
-/** Another student's row, as a student sees it on the sign-in sheet: no device id or position. */
-export const toCreditForPeer = (r: Row) => {
-  const { deviceId: _d, distance: _di, accuracy: _a, ...rest } = toCredit(r) as Record<string, unknown>;
-  return rest;
-};
+/** Another student's row, as a student sees it on the sign-in sheet: who and when only, no flags, reasons or device. */
+export const toCreditForPeer = (r: Row) => ({
+  studentId: r.student_id,
+  name: r.name,
+  hours: Number(r.hours),
+  fullHours: Number(r.full_hours),
+  at: ms(r.at) ?? 0,
+  method: r.method,
+});
 
 export const toNotice = (r: Row) =>
   defined({

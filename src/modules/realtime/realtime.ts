@@ -10,6 +10,8 @@ const COALESCE_MS = 200;
 
 export const rooms = {
   activities: 'activities',
+  /** Only when an activity is created or edited, never on a scan: students' home screens listen here. */
+  catalog: 'catalog',
   activity: (id: string) => `activity:${id}`,
   registrations: (id: string) => `registrations:${id}`,
   credits: (id: string) => `credits:${id}`,
@@ -82,7 +84,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection {
 
   private async decide(room: unknown, user: Viewer): Promise<Decision> {
     if (typeof room !== 'string') return 'INVALID_ROOM';
-    if (room === rooms.activities) return 'ok';
+    if (room === rooms.activities || room === rooms.catalog) return 'ok';
     const [kind, id, studentId, extra] = room.split(':');
     if (!id || extra !== undefined) return 'INVALID_ROOM';
     if (kind === 'activity' && studentId === undefined) return 'ok';

@@ -1,7 +1,7 @@
 import { HttpException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { AllExceptionsFilter } from '../src/common/errors';
-import { cleanName, fmtHours, newId, thDate, thTime } from '../src/common/format';
+import { cleanName, fmtHours, maskName, newId, thDate, thTime } from '../src/common/format';
 import { assertPoster, base64Bytes, MAX_POSTER_BYTES } from '../src/common/poster';
 import { acceptScannedAt, bottleHours, distanceM, judgeLocation } from '../src/modules/claims/rules';
 import { semesterOf } from '../src/modules/roster/strikes';
@@ -80,6 +80,22 @@ describe('QR token', () => {
     expect(checkTime(p, activity.start - M30 - 1, activity)).toBe('QR_EARLY');
     expect(checkTime(p, activity.end + M30, activity)).toBeNull();
     expect(checkTime(p, activity.end + M30 + 1, activity)).toBe('QR_LATE');
+  });
+
+  it('dynamic also works only from start - 30 minutes to end + 30 minutes, however fresh', () => {
+    const M30 = 30 * 60_000;
+    const fresh = (t: number) => checkTime({ v: 3, a: 'x', w: windowOf(t) }, t, activity);
+    expect(fresh(activity.start - M30)).toBeNull();
+    expect(fresh(activity.start - M30 - 1)).toBe('QR_EARLY');
+    expect(fresh(activity.end + M30)).toBeNull();
+    expect(fresh(activity.end + M30 + 1)).toBe('QR_LATE');
+  });
+
+  it('a token made ahead for a later window passes once that window comes', () => {
+    const w = windowOf(NOW) + 12;
+    const p = parseToken(SECRET, makeDynamicToken(SECRET, 'x', w * 10_000, 10))!.payload;
+    expect(checkTime(p, NOW, activity)).toBe('QR_EXPIRED');
+    expect(checkTime(p, w * 10_000, activity)).toBeNull();
   });
 
   it('knows when the token kind no longer matches the activity', () => {
@@ -165,6 +181,14 @@ describe('bottles', () => {
 
 describe('formatting', () => {
   it('cleans names', () => expect(cleanName('  สมชาย   \t ใจดี ')).toBe('สมชาย ใจดี'));
+
+  it.each([
+    ['วอเมด เทสเทส', 'วอเมด เทส•••'],
+    ['  สมชาย   ใจดี ', 'สมชาย ใจ•••'],
+    ['สมหญิง ณ อยุธยา', 'สมหญิง ณ••• อยุธ•••'],
+    ['ชื่อเดิม', 'ชื่อเ•••'],
+    ['John Smith', 'John Smi•••'],
+  ])('masks "%s" as "%s", keeping Thai marks on their letter', (name, masked) => expect(maskName(name)).toBe(masked));
   it('keeps whole hours whole', () => {
     expect(fmtHours(6)).toBe('6');
     expect(fmtHours(1.5)).toBe('1.5');

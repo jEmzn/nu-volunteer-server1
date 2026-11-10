@@ -7,7 +7,9 @@ export const QR_INTERVAL_DEFAULT = 10;
 const QR_LIFETIME_S = 60;
 /** ...and one window ahead, for clocks that run slightly fast. */
 const QR_AHEAD = 1;
-/** A static QR works from this long before start until this long after end. */
+/** How far ahead the QR screen gets tokens, so it keeps showing a valid QR while its network is down. */
+export const QR_PREFETCH_S = 300;
+/** Any QR works from this long before start until this long after end. */
 const STATIC_SLACK_MS = 30 * 60_000;
 
 export interface QrPayload {
@@ -68,13 +70,14 @@ export function parseToken(secret: string, token: unknown): { payload: QrPayload
 /** Whether the token's kind still matches the activity. Switching mode cancels QR codes of the old kind. */
 export const matchesMode = (p: QrPayload, qrMode: string) => (p.s === 1) === (qrMode === 'static');
 
-/** Checks the token's time rule at moment `at`, which is server time or an accepted offline scan time. */
+/**
+ * Checks the token's time rule at moment `at`, which is server time or an accepted scan time. Both kinds only work from
+ * 30 minutes before the start to 30 minutes after the end; a dynamic one must also be fresh.
+ */
 export function checkTime(p: QrPayload, at: number, activity: { start: number; end: number }): QrTimeError | null {
-  if (p.s === 1) {
-    if (at < activity.start - STATIC_SLACK_MS) return 'QR_EARLY';
-    if (at > activity.end + STATIC_SLACK_MS) return 'QR_LATE';
-    return null;
-  }
+  if (at < activity.start - STATIC_SLACK_MS) return 'QR_EARLY';
+  if (at > activity.end + STATIC_SLACK_MS) return 'QR_LATE';
+  if (p.s === 1) return null;
   const interval = typeof p.i === 'number' && p.i > 0 ? p.i : QR_INTERVAL_DEFAULT;
   const cur = windowOf(at, interval);
   if (typeof p.w !== 'number' || p.w < cur - Math.ceil(QR_LIFETIME_S / interval) || p.w > cur + QR_AHEAD) return 'QR_EXPIRED';

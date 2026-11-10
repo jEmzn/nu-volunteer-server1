@@ -276,6 +276,23 @@ describe('realtime', () => {
     expect((await events).sort()).toEqual([`activity:${id}`, 'activities', `credits:${id}`, `registrations:${id}`].sort());
   });
 
+  it('catalog, open to anyone, changes when an activity is made or edited, never on a check-in', async () => {
+    const owner = await sup(app);
+    const id = await newActivity(app, owner);
+    await new Promise((r) => setTimeout(r, 300));
+    const anon = await connect();
+    expect((await join(anon, 'catalog')).ok).toBe(true);
+    const onScan = collect(anon, 500);
+    await api(app, await student(app)).post('/claims', { token: await qrToken(owner, id) }).expect(200);
+    expect(await onScan).toEqual([]);
+    const onEdit = collect(anon, 500);
+    await api(app, owner).patch(`/activities/${id}`, { title: 'ชื่อใหม่' }).expect(200);
+    expect(await onEdit).toEqual(['catalog']);
+    const onCreate = collect(anon, 500);
+    await newActivity(app, owner);
+    expect(await onCreate).toEqual(['catalog']);
+  });
+
   it('sends nothing when nothing changed', async () => {
     const owner = await sup(app);
     const id = await newActivity(app, owner);

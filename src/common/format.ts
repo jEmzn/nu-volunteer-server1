@@ -3,6 +3,22 @@ import { randomInt } from 'node:crypto';
 /** Trims the ends and collapses inner runs of whitespace to one space. Applied to every name before it is stored. */
 export const cleanName = (s: string) => s.trim().replace(/\s+/g, ' ');
 
+const graphemes = new Intl.Segmenter('th', { granularity: 'grapheme' });
+/** Up to 3 characters and never more than half the word, so a short surname is not shown whole. */
+function hideWord(w: string) {
+  const chars = Array.from(graphemes.segment(w), (g) => g.segment);
+  return `${chars.slice(0, Math.min(3, Math.ceil(chars.length / 2))).join('')}•••`;
+}
+
+/**
+ * "วอเมด เทสเทส" → "วอเมด เทส•••": enough for a student to recognise their own name, not someone else's surname.
+ * Counts whole characters, so a Thai vowel mark is never cut off its consonant.
+ */
+export function maskName(name: string) {
+  const [first, ...rest] = cleanName(name).split(' ');
+  return rest.length ? [first, ...rest.map(hideWord)].join(' ') : hideWord(first);
+}
+
 /** Hours as typed by the supervisor: whole numbers stay whole. */
 export const fmtHours = (h: number) => (Number.isInteger(h) ? String(h) : h.toFixed(1));
 

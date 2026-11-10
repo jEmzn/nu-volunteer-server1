@@ -20,11 +20,14 @@ describe('student sign-in', () => {
     expect(c.exp - c.iat).toBe(30 * 86400);
   });
 
-  it('keeps the stored name the next time', async () => {
-    await student(app, '65000001', 'ชื่อเดิม');
+  it('keeps the stored name the next time, and shows it masked with none of its settings', async () => {
+    await student(app, '65000001', 'ชื่อเดิม นามสกุล');
     const res = await http(app).post('/auth/student').send({ studentId: '65000001', name: 'ชื่อใหม่' }).expect(200);
     expect(res.body.isNew).toBe(false);
-    expect(res.body.student.name).toBe('ชื่อเดิม');
+    expect(res.body.student).toEqual({ id: '65000001', name: 'ชื่อเดิม นาม•••', createdAt: expect.any(Number) });
+    expect(decode(res.body.token).name).toBe('ชื่อเดิม นามสกุล');
+    // The student's own record, read with the token, still has the full name.
+    expect((await api(app, res.body.token).get('/students/65000001').expect(200)).body.name).toBe('ชื่อเดิม นามสกุล');
   });
 
   it('asks for a name when the id is new, however the empty name is sent', async () => {
@@ -37,7 +40,7 @@ describe('student sign-in', () => {
   it('a returning student needs no name, even an empty one', async () => {
     await student(app, '65000001', 'ชื่อเดิม');
     for (const body of [{}, { name: '' }]) {
-      expect((await http(app).post('/auth/student').send({ studentId: '65000001', ...body }).expect(200)).body.student.name).toBe('ชื่อเดิม');
+      expect((await http(app).post('/auth/student').send({ studentId: '65000001', ...body }).expect(200)).body.student.name).toBe('ชื่อเ•••');
     }
   });
 
@@ -48,12 +51,12 @@ describe('student sign-in', () => {
 });
 
 describe('supervisor sign-in', () => {
-  it('ignores case and surrounding spaces, gives a 12-hour token', async () => {
+  it('ignores case and surrounding spaces, gives a 7-day token', async () => {
     const res = await http(app).post('/auth/sup').send({ supName: ' ผู้ดูแล   ก ', orgCode: `  ${ORG_A.toLowerCase()} ` }).expect(200);
     expect(res.body.sup).toEqual({ name: 'ผู้ดูแล ก', orgCode: ORG_A, orgName: 'หน่วยงาน A', admin: false });
     const c = decode(res.body.token);
     expect(c).toMatchObject({ role: 'sup', supName: 'ผู้ดูแล ก', orgCode: ORG_A, orgName: 'หน่วยงาน A', admin: false });
-    expect(c.exp - c.iat).toBe(12 * 3600);
+    expect(c.exp - c.iat).toBe(7 * 86400);
   });
 
   it('refuses a wrong code', async () => {

@@ -127,7 +127,7 @@ export class ActivitiesService {
     const cols = { id: newId(), org: user.orgName, org_code: user.orgCode, ...columnsOf(dto) };
     const names = Object.keys(cols);
     const row = await this.db.one(`INSERT INTO activities (${names.join(', ')}) VALUES (${names.map((_, i) => `$${i + 1}`).join(', ')}) RETURNING id`, Object.values(cols));
-    this.realtime.notify(rooms.afterActivity(row!.id));
+    this.realtime.notify([...rooms.afterActivity(row!.id), rooms.catalog]);
     return { id: row!.id as string };
   }
 
@@ -146,7 +146,7 @@ export class ActivitiesService {
       if (!names.length) return;
       await c.query(`UPDATE activities SET ${names.map((n, i) => `${n} = $${i + 2}`).join(', ')} WHERE id = $1`, [id, ...Object.values(cols)]);
     });
-    this.realtime.notify(rooms.afterActivity(id));
+    this.realtime.notify([...rooms.afterActivity(id), rooms.catalog]);
     return this.get(user, id);
   }
 }

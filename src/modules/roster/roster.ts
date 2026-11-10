@@ -8,7 +8,7 @@ import { ApiError, forbidden, notFound, validation } from '../../common/errors';
 import { Bool, Int, Name, Str } from '../../common/fields';
 import { fmtHours } from '../../common/format';
 import { toCredit, toCreditForPeer, toRegistration } from '../../common/mappers';
-import { creditNotice, writeCredit } from '../claims/credit-writer';
+import { hoursChangedNotice, writeCredit } from '../claims/credit-writer';
 import { bottleHours } from '../claims/rules';
 import { RealtimeService, rooms } from '../realtime/realtime';
 import { countStrikes, listStrikes, STRIKE_LIMIT } from './strikes';
@@ -197,7 +197,7 @@ export class RosterService {
       const activity = await lockActivity(c, activityId);
       if (!activity) throw notFound(NO_ACTIVITY);
       assertCanEdit(user, activity);
-      const current = (await c.query('SELECT full_hours FROM credits WHERE activity_id = $1 AND student_id = $2', [activityId, studentId])).rows[0];
+      const current = (await c.query('SELECT hours, full_hours FROM credits WHERE activity_id = $1 AND student_id = $2', [activityId, studentId])).rows[0];
       if (!current) throw notFound('ไม่พบชั่วโมง');
       const full = Number(current.full_hours);
       if (dto.hours > full) throw validation(['hours'], 'ชั่วโมงเกินของกิจกรรม');
@@ -210,6 +210,7 @@ export class RosterService {
         dto.reason || null,
         user.supName,
       ]);
+      await hoursChangedNotice(c, activity, studentId, Number(current.hours), dto.hours);
       return updated.rows[0];
     });
     this.realtime.notify([rooms.credits(activityId)]);
@@ -248,8 +249,8 @@ export class RosterService {
         items,
         user.supName,
       ]);
-      // The first save may have been below one hour, so this is when the student first hears about it.
-      if (Number(current.hours) === 0 && hours > 0) await creditNotice(c, activity, dto.studentId, hours);
+      // The first save may have been below one hour, so this can be when the student first hears about it.
+      await hoursChangedNotice(c, activity, dto.studentId, Number(current.hours), hours);
       return updated.rows[0];
     });
     this.realtime.notify(rooms.afterCredit(activityId));

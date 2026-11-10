@@ -30,7 +30,7 @@
 - `walkIn`, `late`, `waived` ของ Registration มีเฉพาะเมื่อเป็น `true`
 - body ไม่เกิน 1 MB field ที่ไม่รู้จักถูกตัดทิ้งโดยไม่ error
 - ใน PATCH: ไม่ส่ง key = ไม่แก้, ส่ง `null` = ล้างค่า (เฉพาะ field ที่ล้างได้)
-- token นิสิตอายุ 30 วัน ผู้ดูแล 12 ชั่วโมง เมื่อได้ 401 ให้เข้าสู่ระบบใหม่
+- token นิสิตอายุ 30 วัน ผู้ดูแล 7 วัน เมื่อได้ 401 ให้เข้าสู่ระบบใหม่
 
 ### Error
 
@@ -45,7 +45,7 @@
 | 400 | `VALIDATION` | ข้อมูลผิดรูปแบบ, JSON เสีย |
 | 400 | `QR_INVALID` | ลายเซ็นผิด, token เสีย, ไม่พบกิจกรรม, ชนิด QR ไม่ตรงกับโหมดปัจจุบันของกิจกรรม |
 | 400 | `QR_EXPIRED` | dynamic หมดอายุ |
-| 400 | `QR_EARLY`, `QR_LATE` | static ก่อน start − 30 นาที, หลัง end + 30 นาที |
+| 400 | `QR_EARLY`, `QR_LATE` | QR ทั้งสองแบบ ก่อน start − 30 นาที, หลัง end + 30 นาที |
 | 401 | `UNAUTHENTICATED` | ไม่มี token, token ไม่ถูกต้องหรือหมดอายุ, รหัสหน่วยงานผิด |
 | 403 | `FORBIDDEN` | ไม่มีสิทธิ์ |
 | 403 | `NOT_REGISTERED` | กิจกรรมไม่รับ walk-in และไม่ได้ลงทะเบียน |
@@ -86,6 +86,7 @@
 | `getCredit` | `GET /activities/:id/credits/:studentId` (404 → `null`) |
 | `getRegistration` | `GET /activities/:id/registrations/:studentId` (404 → `null`) |
 | `watchActivities` | ห้อง `activities` + `GET /activities` |
+| `watchCatalog` (ใหม่) | ห้อง `catalog` + `GET /activities` หน่วงสุ่ม 0–3 วินาที |
 | `watchActivity` | ห้อง `activity:<id>` + `GET /activities/:id` |
 | `watchRegistrations` | ห้อง `registrations:<id>` + `GET /activities/:id/registrations` |
 | `watchCredits` | ห้อง `credits:<id>` + `GET /activities/:id/credits?order=desc` |
@@ -138,9 +139,13 @@
 ```jsonc
 // ส่ง: name ใช้เฉพาะครั้งแรก รหัสที่มีอยู่แล้วใช้ชื่อเดิมในฐานข้อมูล
 { "studentId": "65012345", "name": "สมชาย ใจดี" }
-// ได้
+// ได้: รหัสใหม่ได้ Student เต็ม
 { "token": "...", "student": { /* Student */ }, "isNew": true }
+// รหัสที่มีอยู่แล้ว: เฉพาะ id, createdAt และชื่อที่ปิดบางส่วน (คำแรกเต็ม คำต่อไปไม่เกิน 3 ตัวอักษรและไม่เกินครึ่งคำ ตามด้วย •••)
+{ "token": "...", "student": { "id": "65012345", "name": "สมชาย ใจ•••", "createdAt": 1793801000000 }, "isNew": false }
 ```
+
+ชื่อที่ปิดไว้ใช้แสดงคำถาม "ใช่...ไหม" เท่านั้น เมื่อนิสิตยืนยันแล้วให้อ่านชื่อเต็มจาก `GET /students/:id` ด้วย token ที่ได้ (มาตรการชั่วคราวก่อนมี SSO ชื่อเต็มยังอยู่ใน payload ของ token)
 
 รหัสใหม่แต่ไม่ส่งชื่อ (หรือชื่อว่าง) ได้ 404 ให้หน้าเว็บถามชื่อแล้วส่งใหม่
 
@@ -226,9 +231,13 @@
 
 **`POST /activities/:id/qr`** (owner/admin) ส่งพิกัดจอถ้ามี `{ "la"?: 16.7, "lo"?: 100.2, "ac"?: 12 }` หลังส่งรายชื่อแล้วได้ 409
 
+พิกัดใน token: static ใช้ `lat`/`lng` ของกิจกรรมก่อน (QR ที่พิมพ์มักพิมพ์ที่อื่น) ถ้าไม่มีจึงใช้พิกัดจอ ส่วน dynamic ใช้พิกัดจอก่อน ถ้าไม่มีจึงใช้ของกิจกรรม
+
 ```jsonc
 // dynamic: ขอใหม่เมื่อเวลา server ถึง refreshAt
-{ "token": "...", "url": "<WEB_ORIGIN>/#/claim?t=...", "mode": "dynamic", "interval": 10, "window": 179380164, "refreshAt": 1793801650000, "now": 1793801644966 }
+// upcoming: token ของ 5 นาทีถัดไป แต่ละตัวใช้ได้เมื่อถึง window ของมันเท่านั้น ให้จอสลับใช้เองตอนขอใหม่ไม่สำเร็จ
+{ "token": "...", "url": "<WEB_ORIGIN>/#/claim?t=...", "mode": "dynamic", "interval": 10, "window": 179380164, "refreshAt": 1793801650000, "now": 1793801644966,
+  "upcoming": [{ "window": 179380165, "token": "...", "url": "..." } /* ... */] }
 // static: ใช้ได้ตั้งแต่ start − 30 นาที ถึง end + 30 นาที
 { "token": "...", "url": "...", "mode": "static", "now": 1793801644966 }
 ```
@@ -241,8 +250,10 @@
 
 ```jsonc
 // ส่ง: lat/lng/accuracy ไม่บังคับ แต่ไม่ส่งจะติด flag location
-//      scannedAt ใส่เฉพาะสแกนที่เก็บไว้ตอนออฟไลน์ (เวลา server เป็น ms ทศนิยมได้)
-{ "token": "...", "lat": 16.74, "lng": 100.19, "accuracy": 15, "deviceId": "d-7f2c", "scannedAt": 1793801000000 }
+//      scannedAt = เวลาที่เปิดลิงก์ (เวลา server เป็น ms ทศนิยมได้) ส่งทุกครั้งที่หน้าเว็บรู้เวลา server แล้ว QR จึงไม่หมดอายุระหว่างกรอกฟอร์ม
+//      offline: true เฉพาะสแกนที่เก็บไว้ตอนออฟไลน์แล้วส่งทีหลัง
+//      flag offline ติดเมื่อส่ง offline: true หรือ scannedAt เก่ากว่า 3 นาที
+{ "token": "...", "lat": 16.74, "lng": 100.19, "accuracy": 15, "deviceId": "d-7f2c", "scannedAt": 1793801000000, "offline": true }
 // สำเร็จ
 { "ok": true, "credit": { /* Credit */ } }
 // ได้ชั่วโมงไปแล้ว (status 200 เช่นกัน)
@@ -280,7 +291,7 @@ error: `QR_INVALID`, `QR_EXPIRED`, `QR_EARLY`, `QR_LATE`, `NOT_REGISTERED`, `ROS
 
 ### ชั่วโมง
 
-**`GET /activities/:id/credits?order=asc|desc`** (นิสิตทุกคน, owner/admin) → `Credit[]` ค่าเริ่มต้นเก่าสุดก่อน นิสิตจะไม่ได้ `deviceId`, `distance`, `accuracy` ของแถวคนอื่น
+**`GET /activities/:id/credits?order=asc|desc`** (นิสิตทุกคน, owner/admin) → `Credit[]` ค่าเริ่มต้นเก่าสุดก่อน แถวของคนอื่นที่นิสิตเห็นมีแค่ `studentId`, `name`, `hours`, `fullHours`, `at`, `method`
 
 **`GET /activities/:id/credits/:studentId`** (self, owner/admin) → `Credit`
 
@@ -294,7 +305,7 @@ error: `QR_INVALID`, `QR_EXPIRED`, `QR_EARLY`, `QR_LATE`, `NOT_REGISTERED`, `ROS
 { "ok": true, "credit": { /* Credit */ } }
 ```
 
-**`PATCH /activities/:id/credits/:studentId`** (owner/admin, กฎล็อก) ส่ง `{ "hours": 3, "reason": "กลับก่อน" }` → `Credit` ต้องมี `reason` เมื่อ `hours` ต่ำกว่าชั่วโมงเต็ม
+**`PATCH /activities/:id/credits/:studentId`** (owner/admin, กฎล็อก) ส่ง `{ "hours": 3, "reason": "กลับก่อน" }` → `Credit` ต้องมี `reason` เมื่อ `hours` ต่ำกว่าชั่วโมงเต็ม ถ้าชั่วโมงเปลี่ยน server สร้าง notice `credit` "ชั่วโมงเปลี่ยนเป็น X ชั่วโมง" (หรือ "ได้รับ X ชั่วโมง" ถ้าเดิมเป็น 0) แลกขวดก็เช่นกัน
 
 **`DELETE /activities/:id/credits/:studentId`** (owner/admin, กฎล็อก) → `{ "ok": true }`
 
@@ -349,7 +360,7 @@ error: `QR_INVALID`, `QR_EXPIRED`, `QR_EARLY`, `QR_LATE`, `NOT_REGISTERED`, `ROS
 { "v": 3, "a": "<activityId>", "w": 179380164, "i": 15, "la": 16.7, "lo": 100.2, "ac": 12 }
 ```
 
-`w` มีเฉพาะ dynamic, `s: 1` มีเฉพาะ static, `i` มีเมื่อ interval ไม่ใช่ 10, `la`/`lo`/`ac` มีเมื่อกิจกรรมตรวจตำแหน่งและจอมีพิกัด
+`w` มีเฉพาะ dynamic, `s: 1` มีเฉพาะ static, `i` มีเมื่อ interval ไม่ใช่ 10, `la`/`lo` มีเมื่อกิจกรรมตรวจตำแหน่งและจอหรือกิจกรรมมีพิกัด `ac` มีเมื่อใช้พิกัดจอ
 
 URL ใน QR: `<WEB_ORIGIN>/#/claim?t=<token>`
 
@@ -371,7 +382,8 @@ socket.emit('leave', { room: `credits:${id}` })
 
 | ห้อง | ใครเข้าได้ | ได้สัญญาณเมื่อ |
 | --- | --- | --- |
-| `activities` | ทุกคน | กิจกรรมใดเปลี่ยน |
+| `activities` | ทุกคน | กิจกรรมใดเปลี่ยน (รวมตัวนับเมื่อมีคนสแกน) |
+| `catalog` | ทุกคน | สร้างหรือแก้กิจกรรมเท่านั้น ไม่ส่งตอนสแกน หน้าแรกนิสิตใช้ห้องนี้ |
 | `activity:<id>` | ทุกคน | แถวกิจกรรมหรือตัวนับเปลี่ยน |
 | `registrations:<id>` | owner/admin | รายชื่อลงทะเบียนเปลี่ยน |
 | `credits:<id>` | นิสิตทุกคน, owner/admin | ชั่วโมงเปลี่ยน |

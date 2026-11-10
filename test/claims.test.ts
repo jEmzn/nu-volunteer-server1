@@ -32,12 +32,37 @@ describe('asking for a QR', () => {
     expect(payload).toEqual({ v: 3, a: id, w: res.window, i: 15, la: LAT, lo: LNG, ac: 10 });
   });
 
-  it('gives a static token with no window', async () => {
+  it('gives a static token with no window, placed where the activity says rather than where it was printed', async () => {
     const owner = await sup(app);
     const id = await newActivity(app, owner, { qrMode: 'static' });
-    const res = await qr(owner, id);
+    const res = await qr(owner, id, { la: 13.75, lo: 100.5, ac: 10 });
     expect(res.mode).toBe('static');
-    expect(JSON.parse(Buffer.from(res.token.split('.')[0], 'base64url').toString())).toEqual({ v: 3, a: id, s: 1, la: LAT, lo: LNG, ac: 10 });
+    expect(res).not.toHaveProperty('upcoming');
+    expect(JSON.parse(Buffer.from(res.token.split('.')[0], 'base64url').toString())).toEqual({ v: 3, a: id, s: 1, la: LAT, lo: LNG });
+  });
+
+  it('a static token uses the screen position when the activity has no place', async () => {
+    const owner = await sup(app);
+    const id = await newActivity(app, owner, { qrMode: 'static', lat: null, lng: null });
+    const payload = JSON.parse(Buffer.from((await qr(owner, id)).token.split('.')[0], 'base64url').toString());
+    expect(payload).toEqual({ v: 3, a: id, s: 1, la: LAT, lo: LNG, ac: 10 });
+  });
+
+  it('gives a dynamic screen the next 5 minutes of tokens, each valid only in its own window', async () => {
+    const owner = await sup(app);
+    const id = await newActivity(app, owner, { qrInterval: 15 });
+    const res = await qr(owner, id);
+    expect(res.upcoming).toHaveLength(20);
+    res.upcoming.forEach((u: { window: number; token: string; url: string }, i: number) => {
+      expect(u.window).toBe(res.window + 1 + i);
+      expect(u.url).toBe(`https://web.example/#/claim?t=${u.token}`);
+      expect(JSON.parse(Buffer.from(u.token.split('.')[0], 'base64url').toString())).toEqual({ v: 3, a: id, w: u.window, i: 15, la: LAT, lo: LNG, ac: 10 });
+    });
+    // A token from 2 minutes ahead is refused now: holding the list opens nothing early.
+    const s = await student(app);
+    await api(app, s).post(`/activities/${id}/registrations`).expect(200);
+    const early = res.upcoming[8].token;
+    expect((await api(app, s).post('/claims', { token: early, ...at }).expect(400)).body.error.code).toBe('QR_EXPIRED');
   });
 
   it('leaves coordinates out when the activity does not check location', async () => {
@@ -113,6 +138,16 @@ describe('token checks at check-in', () => {
     await claim({ token, ...at }).expect(200);
   });
 
+  it('refuses a fresh dynamic token outside 30 minutes around the activity', async () => {
+    const now = Date.now();
+    const id = await newActivity(app, owner, { start: now + 31 * 60_000, end: now + 2 * HOUR });
+    expect((await claim({ token: makeDynamicToken(QR_SECRET, id, now, 10), ...at }).expect(400)).body.error.code).toBe('QR_EARLY');
+    await dbOf(app).query(`UPDATE activities SET start_at = now() - interval '3 hours', end_at = now() - interval '31 minutes' WHERE id = $1`, [id]);
+    expect((await claim({ token: makeDynamicToken(QR_SECRET, id, Date.now(), 10), ...at }).expect(400)).body.error.code).toBe('QR_LATE');
+    await dbOf(app).query(`UPDATE activities SET start_at = now() + interval '29 minutes', end_at = now() + interval '2 hours' WHERE id = $1`, [id]);
+    await claim({ token: makeDynamicToken(QR_SECRET, id, Date.now(), 10), ...at }).expect(200);
+  });
+
   it('cancels old QR codes when the mode changes', async () => {
     const id = await newActivity(app, owner, { qrMode: 'static' });
     const { token } = await qr(owner, id);
@@ -170,8 +205,15 @@ describe('location', () => {
     expect(c).not.toHaveProperty('distance');
   });
 
-  it('no position on the QR screen still gets hours, flagged, keeping accuracy', async () => {
+  it('no position on the QR screen falls back to the activity place', async () => {
     const id = await newActivity(app, owner);
+    const c = await claimed(id, (await qr(owner, id, {})).token, at);
+    expect(c.flags).toEqual([]);
+    expect(c.distance).toBe(0);
+  });
+
+  it('no position on the QR screen nor on the activity still gets hours, flagged, keeping accuracy', async () => {
+    const id = await newActivity(app, owner, { lat: null, lng: null });
     const c = await claimed(id, (await qr(owner, id, {})).token, at);
     expect(c.hours).toBe(6);
     expect(c.flags).toEqual(['location']);
@@ -291,6 +333,35 @@ describe('writing the credit', () => {
     const { token } = await qr(owner, id);
     await api(app, a).post('/claims', { token, ...at, deviceId: 'd1' }).expect(200);
     expect((await api(app, b).post('/claims', { token, ...at, deviceId: 'd2' }).expect(200)).body.credit.flags).toEqual([]);
+  });
+
+  describe('the time the claim link was opened', () => {
+    it('keeps a QR fresh while a new student fills in the form, without the sent-later flag', async () => {
+      const s = await student(app);
+      const id = await newActivity(app, owner);
+      const openedAt = Date.now() - 75_000;
+      const token = makeDynamicToken(QR_SECRET, id, openedAt, 10, { la: LAT, lo: LNG, ac: 10 });
+      expect((await api(app, s).post('/claims', { token, ...at }).expect(400)).body.error.code).toBe('QR_EXPIRED');
+      const { credit } = (await api(app, s).post('/claims', { token, ...at, scannedAt: openedAt }).expect(200)).body;
+      expect(credit.at).toBe(openedAt);
+      expect(credit.flags).toEqual([]);
+    });
+
+    it('flags a scan the phone kept offline, however soon it arrives', async () => {
+      const s = await student(app);
+      const id = await newActivity(app, owner);
+      const openedAt = Date.now() - 20_000;
+      const token = makeDynamicToken(QR_SECRET, id, openedAt, 10, { la: LAT, lo: LNG, ac: 10 });
+      expect((await api(app, s).post('/claims', { token, ...at, scannedAt: openedAt, offline: true }).expect(200)).body.credit.flags).toEqual(['offline']);
+    });
+
+    it('flags a scan sent more than 3 minutes after it was opened', async () => {
+      const s = await student(app);
+      const id = await newActivity(app, owner);
+      const openedAt = Date.now() - 3 * 60_000 - 5_000;
+      const token = makeDynamicToken(QR_SECRET, id, openedAt, 10, { la: LAT, lo: LNG, ac: 10 });
+      expect((await api(app, s).post('/claims', { token, ...at, scannedAt: openedAt }).expect(200)).body.credit.flags).toEqual(['offline']);
+    });
   });
 
   describe('a scan sent later', () => {
