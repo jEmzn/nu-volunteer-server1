@@ -45,8 +45,8 @@ export function supRows(activity: Row, regs: Row[], credits: Row[], tz: string):
       categoryLabel(activity.category_key),
       thDate(activity.start_at.getTime(), tz),
       c ? Number(c.hours) : 0,
-      !c ? 'ไม่มา' : p.reg?.walk_in && activity.category_key !== 'bottle' ? 'ไม่ได้ลงทะเบียน' : 'ได้ชั่วโมง',
-      c ? `${thTime(new Date(c.at).getTime(), tz)} น.` : '',
+      !c ? 'ไม่มา' : p.reg?.walk_in && activity.category_key !== 'bottle' ? 'ได้ชั่วโมง (ไม่ได้ลงทะเบียน)' : 'ได้ชั่วโมง',
+      c ? `${thDate(new Date(c.at).getTime(), tz)} ${thTime(new Date(c.at).getTime(), tz)} น.` : '',
       !c ? '' : c.method === 'qr' ? 'สแกน QR' : (c.edited_by ?? 'ผู้ดูแล'),
       notes.join(', '),
     ].map(safeCell);
