@@ -4,7 +4,7 @@ import type { Row } from '../../common/db.service';
 /** The rows of both Excel files as pure data, so their columns and values can be tested without Excel. */
 
 export const SUP_COLUMNS = ['ลำดับ', 'รหัสนิสิต', 'ชื่อ', 'กิจกรรม', 'หมวด', 'วันที่', 'ชั่วโมง', 'สถานะ', 'เวลายืนยัน', 'ยืนยันโดย', 'หมายเหตุ'] as const;
-export const SUP_WIDTHS = [7, 12, 28, 40, 16, 14, 9, 16, 12, 16, 36];
+export const SUP_WIDTHS = [7, 12, 28, 40, 16, 14, 9, 26, 22, 16, 36];
 export const ADMIN_COLUMNS = ['รหัสนิสิต', 'ชื่อ', 'กิจกรรม', 'หน่วยงาน', 'หมวด', 'วันที่', 'ชั่วโมง'] as const;
 export const ADMIN_WIDTHS = [12, 28, 40, 30, 16, 14, 9];
 
@@ -45,8 +45,8 @@ export function supRows(activity: Row, regs: Row[], credits: Row[], tz: string):
       categoryLabel(activity.category_key),
       thDate(activity.start_at.getTime(), tz),
       c ? Number(c.hours) : 0,
-      !c ? 'ไม่มา' : p.reg?.walk_in && activity.category_key !== 'bottle' ? 'ไม่ได้ลงทะเบียน' : 'ได้ชั่วโมง',
-      c ? `${thTime(new Date(c.at).getTime(), tz)} น.` : '',
+      !c ? 'ไม่มา' : p.reg?.walk_in && activity.category_key !== 'bottle' ? 'ได้ชั่วโมง (ไม่ได้ลงทะเบียน)' : 'ได้ชั่วโมง',
+      c ? `${thDate(new Date(c.at).getTime(), tz)} ${thTime(new Date(c.at).getTime(), tz)} น.` : '',
       !c ? '' : c.method === 'qr' ? 'สแกน QR' : (c.edited_by ?? 'ผู้ดูแล'),
       notes.join(', '),
     ].map(safeCell);
