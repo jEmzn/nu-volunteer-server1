@@ -290,12 +290,12 @@ describe('Excel rows', () => {
     const credits = [
       { ...base, student_id: '1', name: 'คนมาก่อน', at: new Date(Date.UTC(2026, 10, 20, 2, 0)) },
       { ...base, student_id: '2', name: 'คนมาหลัง', at: new Date(Date.UTC(2026, 10, 20, 3, 0)), hours: 3, reason: 'กลับก่อน', flags: ['location', 'device', 'offline'], distance: 412.6 },
-      { ...base, student_id: '6', name: 'วอล์คอิน', at: new Date(Date.UTC(2026, 10, 20, 1, 30)), method: 'manual', edited_by: 'ผู้ดูแล ข' },
+      { ...base, student_id: '6', name: 'วอล์คอิน', at: new Date(Date.UTC(2026, 10, 20, 1, 30)), method: 'manual', edited_by: 'ผู้ดูแล ข', flags: ['location'] },
     ];
     const rows = supRows({ ...act, category_key: 'setup' }, regs, credits, TZ);
     expect(rows.map((r) => r[1])).toEqual(['2', '1', '6', '4', '3']); // newest credit first, then no-shows in Thai order
-    expect(rows[0]).toEqual([1, '2', 'คนมาหลัง', 'เก็บขยะ', 'จัดสถานที่', '20 พ.ย. 2569', 3, 'ได้ชั่วโมง', '10:00 น.', 'สแกน QR', 'กลับก่อน, อยู่นอกพื้นที่ 413 ม., เครื่องซ้ำ, ส่งภายหลัง']);
-    expect(rows[2].slice(6, 10)).toEqual([5, 'ไม่ได้ลงทะเบียน', '08:30 น.', 'ผู้ดูแล ข']);
+    expect(rows[0]).toEqual([1, '2', 'คนมาหลัง', 'เก็บขยะ', 'จัดสถานที่', '20 พ.ย. 2569', 3, 'ได้ชั่วโมง', '20 พ.ย. 2569 10:00 น.', 'สแกน QR', 'กลับก่อน, อยู่นอกพื้นที่ 413 ม., เครื่องซ้ำ, ส่งภายหลัง']);
+    expect(rows[2].slice(6)).toEqual([5, 'ได้ชั่วโมง (ไม่ได้ลงทะเบียน)', '20 พ.ย. 2569 08:30 น.', 'ผู้ดูแล ข', 'ไม่มีตำแหน่ง']);
     expect(rows[3].slice(6)).toEqual([0, 'ไม่มา', '', '', '']);
   });
 

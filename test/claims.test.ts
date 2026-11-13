@@ -275,7 +275,7 @@ describe('writing the credit', () => {
     expect((await regRow(app, id, '65000001')).walk_in).toBe(false);
   });
 
-  it('walk-in creates a registration and bumps reg_count', async () => {
+  it('walk-in creates a registration and stays out of reg_count', async () => {
     const s = await student(app);
     const id = await newActivity(app, owner);
     const { token } = await qr(owner, id);
@@ -283,7 +283,7 @@ describe('writing the credit', () => {
     const reg = await regRow(app, id, '65000001');
     expect(reg).toMatchObject({ walk_in: true, cancelled_at: null, late: false, waived: false, name: 'สมชาย ใจดี' });
     expect(reg.at.getTime()).toBe(credit.at);
-    expect(await activityRow(app, id)).toMatchObject({ reg_count: 1, credit_count: 1 });
+    expect(await activityRow(app, id)).toMatchObject({ reg_count: 0, credit_count: 1 });
   });
 
   it('walk-in reopens a cancelled registration and clears its penalty', async () => {
@@ -296,7 +296,7 @@ describe('writing the credit', () => {
     const { token } = await qr(owner, id);
     await api(app, s).post('/claims', { token, ...at }).expect(200);
     expect(await regRow(app, id, '65000001')).toMatchObject({ walk_in: true, cancelled_at: null, late: false });
-    expect((await activityRow(app, id)).reg_count).toBe(1);
+    expect((await activityRow(app, id)).reg_count).toBe(0);
   });
 
   it('makes a credit notice for the student', async () => {
@@ -455,7 +455,7 @@ describe('writing the credit', () => {
     expect(results.filter((r) => r.body.ok)).toHaveLength(40);
     expect(results.filter((r) => r.body.reason === 'already')).toHaveLength(40);
     const row = await activityRow(app, id);
-    expect(row).toMatchObject({ credit_count: 40, reg_count: 40 });
+    expect(row).toMatchObject({ credit_count: 40, reg_count: 0 });
     expect((await dbOf(app).query('SELECT count(*)::int AS n FROM credits WHERE activity_id = $1', [id])).rows[0].n).toBe(40);
   });
 });

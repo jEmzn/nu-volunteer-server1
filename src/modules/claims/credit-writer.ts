@@ -85,7 +85,6 @@ export async function writeCredit(c: PoolClient, activity: Row, input: CreditInp
        SET name = excluded.name, at = excluded.at, walk_in = true, cancelled_at = null, late = false, waived = false`,
       [activityId, input.studentId, input.name, row.at],
     );
-    await c.query('UPDATE activities SET reg_count = reg_count + 1 WHERE id = $1', [activityId]);
   }
 
   if (input.hours > 0) await creditNotice(c, activity, input.studentId, input.hours);

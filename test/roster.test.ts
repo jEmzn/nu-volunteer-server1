@@ -415,7 +415,7 @@ describe('adding someone by hand', () => {
     expect(res.ok).toBe(true);
     expect(res.credit).toMatchObject({ studentId: '65000009', name: 'คน ใหม่', hours: 6, fullHours: 6, method: 'manual', editedBy: 'ผู้ดูแล ก', flags: [] });
     expect(await regRow(app, id, '65000009')).toMatchObject({ walk_in: true });
-    expect(await activityRow(app, id)).toMatchObject({ reg_count: 1, credit_count: 1 });
+    expect(await activityRow(app, id)).toMatchObject({ reg_count: 0, credit_count: 1 });
     expect((await dbOf(app).query('SELECT name FROM students WHERE id = $1', ['65000009'])).rows[0].name).toBe('คน ใหม่');
     expect((await noticesOf(app, '65000009'))[0]).toMatchObject({ kind: 'credit', title: 'ได้รับ 6 ชั่วโมง' });
   });
@@ -549,11 +549,14 @@ describe('removing', () => {
     await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000001', name: 'ก' }).expect(200);
     await api(app, owner).delete(`/activities/${id}/credits/65000001`).expect(200);
     expect(await creditRow(app, id, '65000001')).toBeUndefined();
-    expect(await activityRow(app, id)).toMatchObject({ credit_count: 0, reg_count: 1 });
+    expect(await activityRow(app, id)).toMatchObject({ credit_count: 0, reg_count: 0 });
   });
 
   it('a registration takes its credit with it and lowers both counts', async () => {
-    await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000001', name: 'ก' }).expect(200);
+    const s = await student(app, '65000001', 'ก');
+    await api(app, s).post(`/activities/${id}/registrations`).expect(200);
+    await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000001' }).expect(200);
+    expect(await activityRow(app, id)).toMatchObject({ credit_count: 1, reg_count: 1 });
     await api(app, owner).delete(`/activities/${id}/registrations/65000001`).expect(200);
     expect(await regRow(app, id, '65000001')).toBeUndefined();
     expect(await creditRow(app, id, '65000001')).toBeUndefined();
@@ -567,6 +570,18 @@ describe('removing', () => {
     await api(app, b).post(`/activities/${id}/registrations`).expect(200);
     await api(app, a).delete(`/activities/${id}/registrations/me`).expect(200);
     await api(app, owner).delete(`/activities/${id}/registrations/65000001`).expect(200);
+    expect((await activityRow(app, id)).reg_count).toBe(1);
+  });
+
+  it('a walk-in leaves the registered count alone when cancelled or removed', async () => {
+    const a = await student(app, '65000001', 'ก');
+    const b = await student(app, '65000002', 'ข');
+    await api(app, a).post(`/activities/${id}/registrations`).expect(200);
+    await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000002' }).expect(200);
+    await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000003', name: 'ค' }).expect(200);
+    expect((await activityRow(app, id)).reg_count).toBe(1);
+    await api(app, b).delete(`/activities/${id}/registrations/me`).expect(200);
+    await api(app, owner).delete(`/activities/${id}/registrations/65000003`).expect(200);
     expect((await activityRow(app, id)).reg_count).toBe(1);
   });
 
@@ -853,8 +868,8 @@ describe('Excel files', () => {
     expect(rows[0]).toEqual(['ลำดับ', 'รหัสนิสิต', 'ชื่อ', 'กิจกรรม', 'หมวด', 'วันที่', 'ชั่วโมง', 'สถานะ', 'เวลายืนยัน', 'ยืนยันโดย', 'หมายเหตุ']);
     expect(rows).toHaveLength(4);
     const byId = Object.fromEntries(rows.slice(1).map((r) => [r[1], r]));
-    expect(byId['65000002'].slice(1, 8)).toEqual(['65000002', 'สมหญิง รักเรียน', 'เก็บขยะริมน้ำ', 'จัดสถานที่', '20 พ.ย. 2569', 3, 'ไม่ได้ลงทะเบียน']);
-    expect(byId['65000002'][8]).toMatch(/^\d{2}:\d{2} น\.$/);
+    expect(byId['65000002'].slice(1, 8)).toEqual(['65000002', 'สมหญิง รักเรียน', 'เก็บขยะริมน้ำ', 'จัดสถานที่', '20 พ.ย. 2569', 3, 'ได้ชั่วโมง (ไม่ได้ลงทะเบียน)']);
+    expect(byId['65000002'][8]).toMatch(/^\d{1,2} \S+ \d{4} \d{2}:\d{2} น\.$/);
     expect(byId['65000002'][9]).toBe('ผู้ดูแล ก');
     expect(byId['65000001'][2]).toBe("'=SUM(1)");
     expect(byId['65000003'].slice(6, 8)).toEqual([0, 'ไม่มา']);

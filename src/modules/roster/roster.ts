@@ -119,11 +119,11 @@ export class RosterService {
       if (!activity) throw notFound(NO_ACTIVITY);
       const updated = await c.query(
         `UPDATE registrations SET cancelled_at = now(), late = now() > $3::timestamptz - make_interval(days => $4)
-         WHERE activity_id = $1 AND student_id = $2 AND cancelled_at IS NULL RETURNING late`,
+         WHERE activity_id = $1 AND student_id = $2 AND cancelled_at IS NULL RETURNING late, walk_in`,
         [activityId, user.sub, activity.start_at, activity.cancel_days ?? 2],
       );
       if (!updated.rows[0]) throw notFound('ไม่พบการลงทะเบียน');
-      await c.query('UPDATE activities SET reg_count = GREATEST(0, reg_count - 1) WHERE id = $1', [activityId]);
+      if (!updated.rows[0].walk_in) await c.query('UPDATE activities SET reg_count = GREATEST(0, reg_count - 1) WHERE id = $1', [activityId]);
       return updated.rows[0].late as boolean;
     });
     this.realtime.notify(rooms.afterRegistration(activityId));
@@ -143,14 +143,14 @@ export class RosterService {
     return toRegistration(row);
   }
 
-  /** Deletes the registration and its credit, if any. A cancelled registration was already out of reg_count. */
+  /** Deletes the registration and its credit, if any. A cancelled registration was already out of reg_count, and a walk-in was never in it. */
   async removeRegistration(user: SupUser, activityId: string, studentId: string) {
     await this.db.tx(async (c) => {
       const activity = await lockActivity(c, activityId);
       if (!activity) throw notFound(NO_ACTIVITY);
       assertCanEdit(user, activity);
-      const reg = await c.query('DELETE FROM registrations WHERE activity_id = $1 AND student_id = $2 RETURNING cancelled_at', [activityId, studentId]);
-      if (reg.rows[0] && !reg.rows[0].cancelled_at) await c.query('UPDATE activities SET reg_count = GREATEST(0, reg_count - 1) WHERE id = $1', [activityId]);
+      const reg = await c.query('DELETE FROM registrations WHERE activity_id = $1 AND student_id = $2 RETURNING cancelled_at, walk_in', [activityId, studentId]);
+      if (reg.rows[0] && !reg.rows[0].cancelled_at && !reg.rows[0].walk_in) await c.query('UPDATE activities SET reg_count = GREATEST(0, reg_count - 1) WHERE id = $1', [activityId]);
       await this.deleteCredit(c, activityId, studentId);
     });
     this.realtime.notify(rooms.afterCredit(activityId));

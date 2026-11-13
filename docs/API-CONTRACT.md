@@ -13,7 +13,7 @@
 | ล้าง field | ส่ง key ที่เป็น `undefined` | **ต้องแปลงเป็น `null`** เพราะ `JSON.stringify` ตัด `undefined` ทิ้ง (`toEdit` ใน `draft.ts` พึ่งเรื่องนี้) |
 | อ่านแล้วไม่พบ | ได้ `null` | ได้ 404 ให้ `remote.ts` แปลงเป็น `null` |
 | QR บนจอผู้ดูแล | `makeToken` ในเบราว์เซอร์ | `POST /activities/:id/qr` แล้วขอใหม่เมื่อถึง `refreshAt` (dynamic) |
-| ตรวจ QR ตอนสแกน | `verifyToken` และ `precheck` | ส่ง token กับพิกัดดิบไป `POST /claims` แล้วอ่านผลหรือ error code ส่วน `payload.a` ยัง decode อ่านได้ แต่ไม่มี `h` (ชั่วโมง) แล้ว |
+| ตรวจ QR ตอนสแกน | `verifyToken` และ `precheck` | ส่ง token กับพิกัดดิบไป `POST /claims` แล้วอ่านผลหรือ error code ส่วน `payload.a` ยัง decode อ่านได้ แต่ไม่มี `h` (ชั่วโมง) แล้ว ตั้งแต่ 13 พ.ย. 2569 กิจกรรมที่ตรวจตำแหน่ง (`locMode` ไม่ใช่ `off`) หน้าเว็บอ่าน `GET /activities/:id/credits/:studentId` หนึ่งครั้งก่อนขอ GPS เพื่อให้คนที่ได้ชั่วโมงแล้วไม่ต้องรอ |
 | เข้าสู่ระบบ | `getStudent`, `createStudent`, `getOrg` | `POST /auth/student` และ `POST /auth/sup` |
 | ผู้ดูแลเพิ่มนิสิตใหม่ | `identify()` แล้ว `claim` | ส่ง `name` มากับ `POST /activities/:id/credits` หรือ `/bottles` เลย **ห้ามเรียก `/auth/student` จากฝั่งผู้ดูแล** |
 | กิจกรรมขวด | `addBottles` เรียกหลายคำสั่ง | `POST /activities/:id/bottles` คำสั่งเดียว ไม่มี `setItems` แล้ว |
@@ -269,6 +269,8 @@ error: `QR_INVALID`, `QR_EXPIRED`, `QR_EARLY`, `QR_LATE`, `NOT_REGISTERED`, `ROS
 **`POST /activities/:id/registrations`** (นิสิต) → `{ "result": "ok" | "full" | "already" }`
 
 ตรวจตามลำดับ: ลงทะเบียนอยู่แล้วได้ `already` เสมอ จากนั้นกิจกรรมที่ `hidden` ได้ 409 `REG_HIDDEN`, เลย `end` ได้ 409 `REG_ENDED`, ยังไม่ถึง `opensAt` ได้ 409 `REG_NOT_OPEN`, เคยยกเลิกกิจกรรมนี้หลังกำหนดได้ 409 `REG_LATE_CANCELLED`, สิทธิ์หมดได้ 409 `REG_NO_CREDITS` แล้วจึงตรวจที่นั่งเต็ม กฎนี้ไม่ใช้กับการเพิ่มคนโดยผู้ดูแลและ walk-in จากการสแกน
+
+`regCount` นับเฉพาะคนที่ลงทะเบียนเองและยังไม่ยกเลิก ไม่รวม walk-in (จากการสแกนหรือผู้ดูแลเพิ่ม) ตั้งแต่ 13 พ.ย. 2569 walk-in จึงไม่กินที่นั่งของกิจกรรมที่จำกัดจำนวน ส่วน `creditCount` นับทุกคนที่ได้ชั่วโมง
 
 **การนับสิทธิ์ที่ถูกหัก** นับในภาคปัจจุบัน (ภาค 1 คือ 1 พ.ค. ถึง 31 ต.ค., ภาค 2 คือ 1 พ.ย. ถึง 30 เม.ย. ตาม `TZ_DISPLAY`) ครบ 3 ครั้งแล้วลงทะเบียนไม่ได้
 
