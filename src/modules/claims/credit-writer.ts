@@ -21,8 +21,8 @@ export interface CreditInput {
 
 export type WriteResult = { ok: true; row: Row } | { ok: false; row: Row };
 
-/** "<activity> · เหตุผล: <reason>", or the activity alone when the supervisor gave no reason. */
-const noticeBody = (activity: Row, reason?: string | null) => (reason ? `${activity.title} · เหตุผล: ${reason}` : activity.title);
+/** The activity, then "เหตุผล: <reason>" on its own line; the activity alone when the supervisor gave no reason. */
+const noticeBody = (activity: Row, reason?: string | null) => (reason ? `${activity.title}\nเหตุผล: ${reason}` : activity.title);
 
 export const creditNotice = (c: PoolClient, activity: Row, studentId: string, hours: number, reason?: string | null) =>
   c.query(`INSERT INTO notices (student_id, kind, title, body, activity_id) VALUES ($1, 'credit', $2, $3, $4)`, [

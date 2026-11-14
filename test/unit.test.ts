@@ -301,9 +301,9 @@ describe('Excel rows', () => {
 
   it('gives the activity once above the table', () => {
     const day = { ...act, category_key: 'setup', end_at: new Date(Date.UTC(2026, 10, 20, 9)) };
-    expect(supHeader(day, TZ)).toEqual(['เก็บขยะ', '20 พ.ย. 2569 เวลา 08:00–16:00 น.', 'หมวด จัดสถานที่', 'หน่วยงาน หน่วยงาน A']);
+    expect(supHeader(day, TZ)).toEqual(['เก็บขยะ', '20 พ.ย. 2569 เวลา 08:00 ถึง 16:00 น.', 'หมวด จัดสถานที่', 'หน่วยงาน หน่วยงาน A']);
     const twoDays = { ...day, end_at: new Date(Date.UTC(2026, 10, 21, 9)) };
-    expect(supHeader(twoDays, TZ)[1]).toBe('20 พ.ย. 2569 08:00 น. – 21 พ.ย. 2569 16:00 น.');
+    expect(supHeader(twoDays, TZ)[1]).toBe('20 พ.ย. 2569 08:00 น. ถึง 21 พ.ย. 2569 16:00 น.');
     expect(supHeader({ ...day, title: '=HYPERLINK("x")' }, TZ)[0]).toBe(`'=HYPERLINK("x")`);
   });
 

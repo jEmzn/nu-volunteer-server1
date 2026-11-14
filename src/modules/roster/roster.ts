@@ -286,7 +286,7 @@ export class RosterService {
         await c.query(
           `INSERT INTO notices (student_id, kind, title, body, activity_id)
            SELECT s, 'recorded', 'บันทึกชั่วโมงลงระบบแล้ว', b, $3 FROM unnest($1::text[], $2::text[]) AS t(s, b)`,
-          [credits.map((r) => r.student_id), credits.map((r) => `${activity.title} · ${fmtHours(Number(r.hours))} ชั่วโมง`), activityId],
+          [credits.map((r) => r.student_id), credits.map((r) => `${activity.title}\n${fmtHours(Number(r.hours))} ชั่วโมง`), activityId],
         );
       }
       return true;

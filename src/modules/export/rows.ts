@@ -21,13 +21,13 @@ export function safeCell<T>(v: T): T | string {
 
 const time = (d: Date | null | undefined) => (d ? new Date(d).getTime() : -1);
 
-/** "20 พ.ย. 2569 เวลา 09:00–16:00 น.", or both ends in full for an activity that runs over more than one day. */
+/** "20 พ.ย. 2569 เวลา 09:00 ถึง 16:00 น.", or both ends in full for an activity that runs over more than one day. */
 export function activityWhen(activity: Row, tz: string) {
   const start = time(activity.start_at);
   const end = time(activity.end_at);
   if (end < 0) return `${thDate(start, tz)} เวลา ${thTime(start, tz)} น.`;
-  if (sameDay(start, end, tz)) return `${thDate(start, tz)} เวลา ${thTime(start, tz)}–${thTime(end, tz)} น.`;
-  return `${thDate(start, tz)} ${thTime(start, tz)} น. – ${thDate(end, tz)} ${thTime(end, tz)} น.`;
+  if (sameDay(start, end, tz)) return `${thDate(start, tz)} เวลา ${thTime(start, tz)} ถึง ${thTime(end, tz)} น.`;
+  return `${thDate(start, tz)} ${thTime(start, tz)} น. ถึง ${thDate(end, tz)} ${thTime(end, tz)} น.`;
 }
 
 /** The lines above the supervisor file's table. */

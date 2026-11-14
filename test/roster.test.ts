@@ -535,8 +535,8 @@ describe('editing hours', () => {
     const notices = await noticesOf(app, '65000001');
     expect(notices.map((n) => n.title)).toEqual(['ได้รับ 6 ชั่วโมง', 'แก้ชั่วโมงเป็น 3 ชม.', 'แก้ชั่วโมงเป็น 0 ชม.']);
     // The student sees why, not only the new number (R4).
-    expect(notices[1].body).toMatch(/ · เหตุผล: กลับก่อน$/);
-    expect(notices[2].body).toMatch(/ · เหตุผล: ไม่ได้ทำงาน$/);
+    expect(notices[1].body).toMatch(/\nเหตุผล: กลับก่อน$/);
+    expect(notices[2].body).toMatch(/\nเหตุผล: ไม่ได้ทำงาน$/);
   });
 });
 
@@ -712,10 +712,10 @@ describe('roster life cycle', () => {
     expect((await api(app, admin).post(`/activities/${id}/record`).expect(200)).body.changed).toBe(false);
     const recorded = (await noticesOf(app, '65000001')).filter((n) => n.kind === 'recorded');
     expect(recorded).toHaveLength(1);
-    expect(recorded[0]).toMatchObject({ title: 'บันทึกชั่วโมงลงระบบแล้ว', body: 'บริจาคโลหิต · 4 ชั่วโมง', activity_id: id });
+    expect(recorded[0]).toMatchObject({ title: 'บันทึกชั่วโมงลงระบบแล้ว', body: 'บริจาคโลหิต\n4 ชั่วโมง', activity_id: id });
     // A manual credit below full hours carries its reason from the start.
     const first = (await noticesOf(app, '65000001')).find((n) => n.kind === 'credit');
-    expect(first).toMatchObject({ title: 'ได้รับ 4 ชั่วโมง', body: 'บริจาคโลหิต · เหตุผล: กลับก่อน' });
+    expect(first).toMatchObject({ title: 'ได้รับ 4 ชั่วโมง', body: 'บริจาคโลหิต\nเหตุผล: กลับก่อน' });
     expect((await noticesOf(app, '65000002')).filter((n) => n.kind === 'recorded')).toHaveLength(0);
     await api(app, admin).patch(`/activities/${id}/credits/65000001`, { hours: 1, reason: 'x' }).expect(409);
   });
@@ -872,7 +872,7 @@ describe('Excel files', () => {
     expect(res.headers['content-type']).toContain('spreadsheetml');
     expect(decodeURIComponent(res.headers['content-disposition'])).toContain('เก็บขยะริมน้ำ รายชื่อ.xlsx');
     const rows = await read(res.body);
-    expect(rows.slice(0, 4).map((r) => r[0])).toEqual(['เก็บขยะริมน้ำ', '20 พ.ย. 2569 เวลา 08:00–15:00 น.', 'หมวด จัดสถานที่', expect.stringMatching(/^หน่วยงาน \S/)]);
+    expect(rows.slice(0, 4).map((r) => r[0])).toEqual(['เก็บขยะริมน้ำ', '20 พ.ย. 2569 เวลา 08:00 ถึง 15:00 น.', 'หมวด จัดสถานที่', expect.stringMatching(/^หน่วยงาน \S/)]);
     expect(rows[4]).toEqual(['ลำดับ', 'รหัสนิสิต', 'ชื่อ', 'ชั่วโมง', 'สถานะ', 'เวลายืนยัน', 'ยืนยันโดย', 'หมายเหตุ']);
     expect(rows).toHaveLength(8);
     const byId = Object.fromEntries(rows.slice(5).map((r) => [r[1], r]));
