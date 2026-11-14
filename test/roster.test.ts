@@ -870,7 +870,8 @@ describe('Excel files', () => {
   it('the supervisor file gives the activity once on top, then 8 columns in order, Thai intact, formulas stopped', async () => {
     const res = await download(api(app, owner).get(`/activities/${id}/export?kind=sup`).expect(200));
     expect(res.headers['content-type']).toContain('spreadsheetml');
-    expect(decodeURIComponent(res.headers['content-disposition'])).toContain('เก็บขยะริมน้ำ รายชื่อ.xlsx');
+    // What it is, the activity's day, then the title (R22).
+    expect(decodeURIComponent(res.headers['content-disposition'])).toContain("filename*=UTF-8''รายชื่อ 20-11-2569 เก็บขยะริมน้ำ.xlsx");
     const rows = await read(res.body);
     expect(rows.slice(0, 4).map((r) => r[0])).toEqual(['เก็บขยะริมน้ำ', '20 พ.ย. 2569 เวลา 08:00 ถึง 15:00 น.', 'หมวด จัดสถานที่', expect.stringMatching(/^หน่วยงาน \S/)]);
     expect(rows[4]).toEqual(['ลำดับ', 'รหัสนิสิต', 'ชื่อ', 'ชั่วโมง', 'สถานะ', 'เวลายืนยัน', 'ยืนยันโดย', 'หมายเหตุ']);
@@ -881,7 +882,10 @@ describe('Excel files', () => {
     expect(byId['65000002'][5]).toMatch(/^\d{1,2} \S+ \d{2}:\d{2} น\.$/);
     expect(byId['65000002'][6]).toBe('ผู้ดูแล ก');
     expect(byId['65000001'][2]).toBe("'=SUM(1)");
-    expect(byId['65000003'].slice(3, 5)).toEqual([0, 'ไม่มา']);
+    // The roster is still open: not scanned yet, no hours, not "ไม่มา" (R15).
+    expect(byId['65000003'].slice(2, 5)).toEqual(['ปวีณา มาสาย', undefined, 'ยังไม่สแกน']);
+    // Oldest hours first, as on the student's sheet, then who has none (R16).
+    expect(rows.slice(5).map((r) => r[1])).toEqual(['65000002', '65000001', '65000003']);
 
     // The table header stays in view and can be filtered.
     const wb = new ExcelJS.Workbook();
@@ -893,9 +897,21 @@ describe('Excel files', () => {
     expect(ws.autoFilter).toBeTruthy();
   });
 
+  it('after the roster closes, someone without hours is a no-show with 0 hours (R15)', async () => {
+    await dbOf(app).query('UPDATE activities SET closed_at = now() WHERE id = $1', [id]);
+    const rows = await read((await download(api(app, owner).get(`/activities/${id}/export?kind=sup`).expect(200))).body);
+    const noShow = rows.slice(5).find((r) => r[1] === '65000003')!;
+    expect(noShow.slice(3, 5)).toEqual([0, 'ไม่มา']);
+  });
+
   it('the centre file has 7 columns, earners only, by id', async () => {
     const res = await download(api(app, admin).get(`/activities/${id}/export?kind=admin`).expect(200));
-    expect(decodeURIComponent(res.headers['content-disposition'])).toContain('บันทึกชั่วโมง.xlsx');
+    expect(decodeURIComponent(res.headers['content-disposition'])).toContain("filename*=UTF-8''บันทึกชั่วโมง 20-11-2569 เก็บขยะริมน้ำ.xlsx");
+    // A plain table, with its header kept in view and filters on (R22).
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(res.body as any);
+    expect(wb.worksheets[0].views[0]).toMatchObject({ state: 'frozen', ySplit: 1 });
+    expect(wb.worksheets[0].autoFilter).toBeTruthy();
     const rows = await read(res.body);
     expect(rows).toEqual([
       ['รหัสนิสิต', 'ชื่อ', 'กิจกรรม', 'หน่วยงาน', 'หมวด', 'วันที่', 'ชั่วโมง'],

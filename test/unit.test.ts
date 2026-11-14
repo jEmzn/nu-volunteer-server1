@@ -5,7 +5,7 @@ import { cleanName, fmtHours, maskName, newId, thDate, thTime } from '../src/com
 import { assertPoster, base64Bytes, MAX_POSTER_BYTES } from '../src/common/poster';
 import { acceptScannedAt, bottleHours, distanceM, judgeLocation } from '../src/modules/claims/rules';
 import { semesterOf } from '../src/modules/roster/strikes';
-import { adminRows, confirmedAt, safeCell, supHeader, supRows } from '../src/modules/export/rows';
+import { adminRows, confirmedAt, fileTitle, safeCell, supHeader, supRows, xlsxName } from '../src/modules/export/rows';
 import { checkTime, makeDynamicToken, makeStaticToken, matchesMode, parseToken, windowOf } from '../src/modules/qr/qr-token';
 
 const SECRET = 'unit-secret-unit-secret-unit-secret';
@@ -292,11 +292,36 @@ describe('Excel rows', () => {
       { ...base, student_id: '2', name: 'คนมาหลัง', at: new Date(Date.UTC(2026, 10, 20, 3, 0)), hours: 3, reason: 'กลับก่อน', flags: ['location', 'device', 'offline'], distance: 412.6 },
       { ...base, student_id: '6', name: 'วอล์คอิน', at: new Date(Date.UTC(2026, 10, 20, 1, 30)), method: 'manual', edited_by: 'ผู้ดูแล ข', flags: ['location'] },
     ];
-    const rows = supRows({ ...act, category_key: 'setup' }, regs, credits, TZ);
-    expect(rows.map((r) => r[1])).toEqual(['2', '1', '6', '4', '3']); // newest credit first, then no-shows in Thai order
-    expect(rows[0]).toEqual([1, '2', 'คนมาหลัง', 3, 'ได้ชั่วโมง', '10:00 น.', 'สแกน QR', 'กลับก่อน, อยู่นอกพื้นที่ 413 ม., ใช้เครื่องซ้ำ, ส่งภายหลัง']);
-    expect(rows[2].slice(3)).toEqual([5, 'walk-in', '08:30 น.', 'ผู้ดูแล ข', 'ไม่มีตำแหน่ง']);
+    const closed = { ...act, category_key: 'setup', closed_at: new Date() };
+    const rows = supRows(closed, regs, credits, TZ);
+    expect(rows.map((r) => r[1])).toEqual(['6', '1', '2', '4', '3']); // oldest credit first, then no-shows in Thai order
+    expect(rows.map((r) => r[0])).toEqual([1, 2, 3, 4, 5]);
+    expect(rows[2]).toEqual([3, '2', 'คนมาหลัง', 3, 'ได้ชั่วโมง', '10:00 น.', 'สแกน QR', 'กลับก่อน, อยู่นอกพื้นที่ 413 ม., ใช้เครื่องซ้ำ, ส่งภายหลัง']);
+    expect(rows[0].slice(3)).toEqual([5, 'walk-in', '08:30 น.', 'ผู้ดูแล ข', 'ไม่มีตำแหน่ง']);
     expect(rows[3].slice(3)).toEqual([0, 'ไม่มา', '', '', '']);
+  });
+
+  it('calls nobody a no-show until the roster closes, by hand or a day after the end (R15)', () => {
+    const regs = [{ student_id: '3', name: 'ขวัญ', walk_in: false, cancelled_at: null }];
+    const open = { ...act, category_key: 'setup', end_at: new Date(Date.UTC(2026, 10, 20, 9)) };
+    const during = Date.UTC(2026, 10, 20, 5);
+    expect(supRows(open, regs, [], TZ, during)[0].slice(3, 5)).toEqual([null, 'ยังไม่สแกน']);
+    expect(supRows(open, regs, [], TZ, Date.UTC(2026, 10, 21, 9))[0].slice(3, 5)).toEqual([0, 'ไม่มา']);
+    expect(supRows({ ...open, closed_at: new Date(during) }, regs, [], TZ, during)[0].slice(3, 5)).toEqual([0, 'ไม่มา']);
+  });
+
+  it('names files by kind, the activity day and the title cut between words (R22)', () => {
+    const a = { ...act, title: 'ค่ายอาสาสร้างฝายชะลอน้ำและซ่อมแซมอาคารเรียนโรงเรียนบ้านห้วยไร่' };
+    const name = xlsxName('sup', a, TZ);
+    expect(name).toMatch(/^รายชื่อ 20-11-2569 ค่ายอาสา/);
+    expect(name.endsWith('.xlsx')).toBe(true);
+    const title = name.slice('รายชื่อ 20-11-2569 '.length, -'.xlsx'.length);
+    expect(title.length).toBeLessThanOrEqual(40);
+    expect(a.title.startsWith(title)).toBe(true);
+    // Cut at a word boundary: the next character starts a new word, never mid-word like "อาคารเร".
+    expect(['อาคาร', 'เรียน', 'โรงเรียน', 'และ', 'ซ่อมแซม'].some((w) => a.title.slice(title.length).startsWith(w))).toBe(true);
+    expect(xlsxName('admin', { ...act, title: 'a/b: c?' }, TZ)).toBe('บันทึกชั่วโมง 20-11-2569 a b c.xlsx');
+    expect(fileTitle('สั้น')).toBe('สั้น');
   });
 
   it('gives the activity once above the table', () => {

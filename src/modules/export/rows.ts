@@ -1,4 +1,4 @@
-import { sameDay, thDate, thDayMonth, thTime } from '../../common/format';
+import { sameDay, thDate, thDayMonth, thTime, zonedParts } from '../../common/format';
 import type { Row } from '../../common/db.service';
 
 /** The rows of both Excel files as pure data, so their columns and values can be tested without Excel. */
@@ -46,13 +46,26 @@ export function confirmedAt(at: number, activity: Row, tz: string) {
   return oneDay && sameDay(at, start, tz) ? `${thTime(at, tz)} น.` : `${thDayMonth(at, tz)} ${thTime(at, tz)} น.`;
 }
 
-/** One row per person: newest scans first, then everyone who did not come, by Thai name order. */
-export function supRows(activity: Row, regs: Row[], credits: Row[], tz: string): (string | number)[][] {
+/** Hours after the end the roster closes by itself when nobody closed it (the scheduler does the same). */
+const AUTO_CLOSE_MS = 24 * 3600_000;
+
+/** The roster is closed: by hand, or a day after the end. Only then is someone without hours a no-show. */
+export function rosterClosed(activity: Row, now: number) {
+  return !!activity.closed_at || (time(activity.end_at) >= 0 && now >= time(activity.end_at) + AUTO_CLOSE_MS);
+}
+
+/**
+ * One row per person, numbered in the order hours were given (oldest first, as on the student's roster), then everyone
+ * without hours in Thai name order. Before the roster closes they have not scanned yet; after, they did not come.
+ */
+export function supRows(activity: Row, regs: Row[], credits: Row[], tz: string, now = Date.now()): (string | number | null)[][] {
+  const closed = rosterClosed(activity, now);
   const people = new Map<string, { id: string; name: string; reg?: Row; credit?: Row }>();
   for (const r of regs) if (!r.cancelled_at) people.set(r.student_id, { id: r.student_id, name: r.name, reg: r });
   for (const c of credits) people.set(c.student_id, { ...people.get(c.student_id), id: c.student_id, name: c.name, credit: c });
 
-  const sorted = [...people.values()].sort((a, b) => time(b.credit?.at) - time(a.credit?.at) || thai.compare(a.name, b.name));
+  const last = Number.MAX_SAFE_INTEGER;
+  const sorted = [...people.values()].sort((a, b) => (a.credit ? time(a.credit.at) : last) - (b.credit ? time(b.credit.at) : last) || thai.compare(a.name, b.name));
   return sorted.map((p, i) => {
     const c = p.credit;
     const flags: string[] = c?.flags ?? [];
@@ -67,8 +80,9 @@ export function supRows(activity: Row, regs: Row[], credits: Row[], tz: string):
       i + 1,
       p.id,
       p.name,
-      c ? Number(c.hours) : 0,
-      !c ? 'ไม่มา' : p.reg?.walk_in && activity.category_key !== 'bottle' ? 'walk-in' : 'ได้ชั่วโมง',
+      // An empty cell, not 0, while they may still come.
+      c ? Number(c.hours) : closed ? 0 : null,
+      !c ? (closed ? 'ไม่มา' : 'ยังไม่สแกน') : p.reg?.walk_in && activity.category_key !== 'bottle' ? 'walk-in' : 'ได้ชั่วโมง',
       c ? confirmedAt(new Date(c.at).getTime(), activity, tz) : '',
       !c ? '' : c.method === 'qr' ? 'สแกน QR' : (c.edited_by ?? 'ผู้ดูแล'),
       notes.join(', '),
@@ -82,4 +96,26 @@ export function adminRows(activity: Row, credits: Row[], tz: string): (string | 
     .filter((c) => Number(c.hours) > 0)
     .sort((a, b) => a.student_id.localeCompare(b.student_id))
     .map((c) => [c.student_id, c.name, activity.title, activity.org, categoryLabel(activity.category_key), thDate(activity.start_at.getTime(), tz), Number(c.hours)].map(safeCell));
+}
+
+const words = new Intl.Segmenter('th', { granularity: 'word' });
+
+/** The title for a file name: no characters a file system refuses, at most `max` characters, cut between words. */
+export function fileTitle(title: string, max = 40) {
+  const clean = title.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (clean.length <= max) return clean;
+  let out = '';
+  for (const { segment } of words.segment(clean)) {
+    if ((out + segment).length > max) break;
+    out += segment;
+  }
+  // One word longer than the limit: cut it rather than give no title.
+  return (out.trim() || clean.slice(0, max)).trim();
+}
+
+/** "รายชื่อ 20-11-2569 บริจาคโลหิต ครั้งที่ 2.xlsx": what it is, the activity's day, then the title, so files sort by day. */
+export function xlsxName(kind: 'sup' | 'admin', activity: Row, tz: string) {
+  const p = zonedParts(time(activity.start_at), tz);
+  const day = `${p.day.padStart(2, '0')}-${p.month.padStart(2, '0')}-${Number(p.year) + 543}`;
+  return `${kind === 'sup' ? 'รายชื่อ' : 'บันทึกชั่วโมง'} ${day} ${fileTitle(String(activity.title))}.xlsx`;
 }

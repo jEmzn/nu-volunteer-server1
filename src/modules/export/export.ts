@@ -6,13 +6,13 @@ import { assertOwner, CurrentUser, Roles, SupUser } from '../../common/auth';
 import { AppConfig } from '../../common/config';
 import { DbService } from '../../common/db.service';
 import { forbidden, notFound, validation } from '../../common/errors';
-import { ADMIN_COLUMNS, ADMIN_WIDTHS, adminRows, SUP_COLUMNS, SUP_WIDTHS, supHeader, supRows } from './rows';
+import { ADMIN_COLUMNS, ADMIN_WIDTHS, adminRows, SUP_COLUMNS, SUP_WIDTHS, supHeader, supRows, xlsxName } from './rows';
 
 /**
- * One sheet. `header` lines go above the table, the first as the title, then one empty row. With them, the table's
- * header row stays in view while scrolling and has filters, so the rows can still be sorted. Without, a plain table.
+ * One sheet. `header` lines go above the table, the first as the title, then one empty row. Either way the table's
+ * header row stays in view while scrolling and has filters, so the rows can still be sorted.
  */
-async function workbook(sheet: string, columns: readonly string[], widths: number[], rows: (string | number)[][], header: string[] = []) {
+async function workbook(sheet: string, columns: readonly string[], widths: number[], rows: (string | number | null)[][], header: string[] = []) {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet(sheet);
   ws.columns = widths.map((width) => ({ width }));
@@ -24,10 +24,8 @@ async function workbook(sheet: string, columns: readonly string[], widths: numbe
   const head = ws.addRow([...columns]);
   head.font = { bold: true };
   ws.addRows(rows);
-  if (header.length) {
-    ws.views = [{ state: 'frozen', ySplit: head.number }];
-    ws.autoFilter = { from: { row: head.number, column: 1 }, to: { row: head.number + rows.length, column: columns.length } };
-  }
+  ws.views = [{ state: 'frozen', ySplit: head.number }];
+  ws.autoFilter = { from: { row: head.number, column: 1 }, to: { row: head.number + rows.length, column: columns.length } };
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
@@ -40,18 +38,18 @@ export class ExportService {
 
   async build(user: SupUser, activityId: string, kind: string | undefined) {
     if (kind !== 'sup' && kind !== 'admin') throw validation(['kind']);
-    const activity = await this.db.one('SELECT id, title, org, org_code, category_key, start_at, end_at FROM activities WHERE id = $1', [activityId]);
+    const activity = await this.db.one('SELECT id, title, org, org_code, category_key, start_at, end_at, closed_at FROM activities WHERE id = $1', [activityId]);
     if (!activity) throw notFound('ไม่พบกิจกรรม');
     if (kind === 'admin' && !user.admin) throw forbidden('ไฟล์นี้สำหรับผู้ดูแลศูนย์');
     assertOwner(user, activity);
 
     const credits = (await this.db.query('SELECT * FROM credits WHERE activity_id = $1', [activityId])).rows;
-    const title = String(activity.title).slice(0, 40);
+    const tz = this.config.tzDisplay;
     if (kind === 'admin') {
-      return { name: `${title} บันทึกชั่วโมง.xlsx`, data: await workbook('บันทึกชั่วโมง', ADMIN_COLUMNS, ADMIN_WIDTHS, adminRows(activity, credits, this.config.tzDisplay)) };
+      return { name: xlsxName('admin', activity, tz), data: await workbook('บันทึกชั่วโมง', ADMIN_COLUMNS, ADMIN_WIDTHS, adminRows(activity, credits, this.config.tzDisplay)) };
     }
     const regs = (await this.db.query('SELECT * FROM registrations WHERE activity_id = $1', [activityId])).rows;
-    return { name: `${title} รายชื่อ.xlsx`, data: await workbook('รายชื่อ', SUP_COLUMNS, SUP_WIDTHS, supRows(activity, regs, credits, this.config.tzDisplay), supHeader(activity, this.config.tzDisplay)) };
+    return { name: xlsxName('sup', activity, tz), data: await workbook('รายชื่อ', SUP_COLUMNS, SUP_WIDTHS, supRows(activity, regs, credits, this.config.tzDisplay), supHeader(activity, this.config.tzDisplay)) };
   }
 }
 
