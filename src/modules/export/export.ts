@@ -6,21 +6,13 @@ import { assertOwner, CurrentUser, Roles, SupUser } from '../../common/auth';
 import { AppConfig } from '../../common/config';
 import { DbService } from '../../common/db.service';
 import { forbidden, notFound, validation } from '../../common/errors';
-import { ADMIN_COLUMNS, ADMIN_WIDTHS, adminRows, SUP_COLUMNS, SUP_WIDTHS, supHeader, supRows, xlsxName } from './rows';
+import { ADMIN_COLUMNS, ADMIN_WIDTHS, adminRows, SUP_COLUMNS, SUP_WIDTHS, supRows, xlsxName } from './rows';
 
-/**
- * One sheet. `header` lines go above the table, the first as the title, then one empty row. Either way the table's
- * header row stays in view while scrolling and has filters, so the rows can still be sorted.
- */
-async function workbook(sheet: string, columns: readonly string[], widths: number[], rows: (string | number | null)[][], header: string[] = []) {
+/** One sheet, a flat table: the header row is row 1, stays in view while scrolling and has filters, so rows can be sorted. */
+async function workbook(sheet: string, columns: readonly string[], widths: number[], rows: (string | number | null)[][]) {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet(sheet);
   ws.columns = widths.map((width) => ({ width }));
-  header.forEach((line, i) => {
-    const row = ws.addRow([line]);
-    row.font = i === 0 ? { bold: true, size: 14 } : { size: 11 };
-  });
-  if (header.length) ws.addRow([]);
   const head = ws.addRow([...columns]);
   head.font = { bold: true };
   ws.addRows(rows);
@@ -49,7 +41,7 @@ export class ExportService {
       return { name: xlsxName('admin', activity, tz), data: await workbook('บันทึกชั่วโมง', ADMIN_COLUMNS, ADMIN_WIDTHS, adminRows(activity, credits, this.config.tzDisplay)) };
     }
     const regs = (await this.db.query('SELECT * FROM registrations WHERE activity_id = $1', [activityId])).rows;
-    return { name: xlsxName('sup', activity, tz), data: await workbook('รายชื่อ', SUP_COLUMNS, SUP_WIDTHS, supRows(activity, regs, credits, this.config.tzDisplay), supHeader(activity, this.config.tzDisplay)) };
+    return { name: xlsxName('sup', activity, tz), data: await workbook('รายชื่อ', SUP_COLUMNS, SUP_WIDTHS, supRows(activity, regs, credits, this.config.tzDisplay)) };
   }
 }
 
@@ -61,7 +53,7 @@ export class ExportController {
   @Get()
   @Roles('sup')
   @ApiQuery({ name: 'kind', enum: ['sup', 'admin'] })
-  @ApiOperation({ summary: 'ไฟล์ Excel: sup หัวไฟล์บอกกิจกรรมแล้วตาราง 8 คอลัมน์ (owner/admin), admin 7 คอลัมน์ (ผู้ดูแลศูนย์)' })
+  @ApiOperation({ summary: 'ไฟล์ Excel: sup ตารางเรียบ 11 คอลัมน์ (owner/admin), admin 7 คอลัมน์ (ผู้ดูแลศูนย์)' })
   async export(@CurrentUser() user: SupUser, @Param('id') id: string, @Query('kind') kind: string | undefined, @Res({ passthrough: true }) res: Response) {
     const { name, data } = await this.exports.build(user, id, kind);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

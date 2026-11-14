@@ -1,11 +1,11 @@
-import { sameDay, thDate, thDayMonth, thTime, zonedParts } from '../../common/format';
+import { thDate, thTime, zonedParts } from '../../common/format';
 import type { Row } from '../../common/db.service';
 
 /** The rows of both Excel files as pure data, so their columns and values can be tested without Excel. */
 
-/** One activity per file: its title, date, category and organisation are header rows above the table, not columns. */
-export const SUP_COLUMNS = ['ลำดับ', 'รหัสนิสิต', 'ชื่อ', 'ชั่วโมง', 'สถานะ', 'เวลายืนยัน', 'ยืนยันโดย', 'หมายเหตุ'] as const;
-export const SUP_WIDTHS = [7, 12, 28, 9, 12, 16, 18, 40];
+/** A flat table, header in row 1: the activity's title, category and date repeat on every row, like the centre file. */
+export const SUP_COLUMNS = ['ลำดับ', 'รหัสนิสิต', 'ชื่อ', 'กิจกรรม', 'หมวด', 'วันที่', 'ชั่วโมง', 'สถานะ', 'เวลายืนยัน', 'ยืนยันโดย', 'หมายเหตุ'] as const;
+export const SUP_WIDTHS = [7, 12, 28, 40, 16, 14, 9, 12, 20, 18, 40];
 export const ADMIN_COLUMNS = ['รหัสนิสิต', 'ชื่อ', 'กิจกรรม', 'หน่วยงาน', 'หมวด', 'วันที่', 'ชั่วโมง'] as const;
 export const ADMIN_WIDTHS = [12, 28, 40, 30, 16, 14, 9];
 
@@ -21,29 +21,9 @@ export function safeCell<T>(v: T): T | string {
 
 const time = (d: Date | null | undefined) => (d ? new Date(d).getTime() : -1);
 
-/** "20 พ.ย. 2569 เวลา 09:00 ถึง 16:00 น.", or both ends in full for an activity that runs over more than one day. */
-export function activityWhen(activity: Row, tz: string) {
-  const start = time(activity.start_at);
-  const end = time(activity.end_at);
-  if (end < 0) return `${thDate(start, tz)} เวลา ${thTime(start, tz)} น.`;
-  if (sameDay(start, end, tz)) return `${thDate(start, tz)} เวลา ${thTime(start, tz)} ถึง ${thTime(end, tz)} น.`;
-  return `${thDate(start, tz)} ${thTime(start, tz)} น. ถึง ${thDate(end, tz)} ${thTime(end, tz)} น.`;
-}
-
-/** The lines above the supervisor file's table. */
-export function supHeader(activity: Row, tz: string): string[] {
-  return [activity.title, activityWhen(activity, tz), `หมวด ${categoryLabel(activity.category_key)}`, `หน่วยงาน ${activity.org}`].map((v) => String(safeCell(v)));
-}
-
-/**
- * When the hours were confirmed. Only the time on a one-day activity's own day, since the header already gives the date;
- * the short date as well when it was another day, such as a supervisor adding someone afterwards.
- */
-export function confirmedAt(at: number, activity: Row, tz: string) {
-  const start = time(activity.start_at);
-  const end = time(activity.end_at);
-  const oneDay = end < 0 || sameDay(start, end, tz);
-  return oneDay && sameDay(at, start, tz) ? `${thTime(at, tz)} น.` : `${thDayMonth(at, tz)} ${thTime(at, tz)} น.`;
+/** When the hours were confirmed, with the full date: "20 พ.ย. 2569 10:52 น.". The app shows the time alone. */
+export function confirmedAt(at: number, tz: string) {
+  return `${thDate(at, tz)} ${thTime(at, tz)} น.`;
 }
 
 /** Hours after the end the roster closes by itself when nobody closed it (the scheduler does the same). */
@@ -93,10 +73,13 @@ export function supRows(activity: Row, regs: Row[], credits: Row[], tz: string, 
       i + 1,
       p.id,
       p.name,
+      activity.title,
+      categoryLabel(activity.category_key),
+      thDate(time(activity.start_at), tz),
       // An empty cell, not 0, while they may still come.
       c ? Number(c.hours) : closed ? 0 : null,
       status(activity, p.reg, c, closed),
-      c ? confirmedAt(new Date(c.at).getTime(), activity, tz) : '',
+      c ? confirmedAt(new Date(c.at).getTime(), tz) : '',
       !c ? '' : c.method === 'qr' ? 'สแกน QR' : (c.edited_by ?? 'ผู้ดูแล'),
       notes.join(', '),
     ].map(safeCell);

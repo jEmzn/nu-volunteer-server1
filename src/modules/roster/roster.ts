@@ -7,7 +7,7 @@ import { ACTIVITY_RULE_COLUMNS, DbService, lockActivity, Row } from '../../commo
 import { ApiError, forbidden, notFound, validation } from '../../common/errors';
 import { Bool, Int, Name, Str } from '../../common/fields';
 import { fmtHours } from '../../common/format';
-import { toCredit, toCreditForPeer, toRegistration } from '../../common/mappers';
+import { toCredit, toCreditForPeer, toOwnCredit, toRegistration } from '../../common/mappers';
 import { hoursChangedNotice, writeCredit } from '../claims/credit-writer';
 import { bottleHours } from '../claims/rules';
 import { RealtimeService, rooms } from '../realtime/realtime';
@@ -34,6 +34,8 @@ export class AddCreditDto {
   @Int({ optional: true, min: 0, max: 99 }) hours?: number | null;
   /** Required when the hours are below full. */
   @Str({ optional: true, max: 500 }) reason?: string | null;
+  /** Let the student read the reason. Off unless the supervisor turns it on. */
+  @Bool({ optional: true }) shareReason?: boolean;
 }
 
 export class WaiveDto {
@@ -44,6 +46,8 @@ export class SetHoursDto {
   @Int({ min: 0, max: 99 }) hours: number;
   /** Required when the hours are below full. */
   @Str({ optional: true, max: 500 }) reason?: string | null;
+  /** Let the student read the reason. Off unless the supervisor turns it on. */
+  @Bool({ optional: true }) shareReason?: boolean;
 }
 
 export class AddBottlesDto {
@@ -164,14 +168,15 @@ export class RosterService {
     const activity = await this.readActivity(activityId);
     if (!isStudent(user)) assertOwner(user, activity);
     const { rows } = await this.db.query(`SELECT * FROM credits WHERE activity_id = $1 ORDER BY at ${order === 'desc' ? 'DESC' : 'ASC'}`, [activityId]);
-    return rows.map((r) => (isStudent(user) && r.student_id !== user.sub ? toCreditForPeer(r) : toCredit(r)));
+    if (!isStudent(user)) return rows.map(toCredit);
+    return rows.map((r) => (r.student_id === user.sub ? toOwnCredit(r) : toCreditForPeer(r)));
   }
 
   async credit(user: User, activityId: string, studentId: string) {
     await this.assertSelfOrOwner(user, activityId, studentId);
     const row = await this.db.one('SELECT * FROM credits WHERE activity_id = $1 AND student_id = $2', [activityId, studentId]);
     if (!row) throw notFound('ไม่พบชั่วโมง');
-    return toCredit(row);
+    return isStudent(user) ? toOwnCredit(row) : toCredit(row);
   }
 
   /** Someone who cannot scan. Skips QR, location and the registration check. */
@@ -185,7 +190,7 @@ export class RosterService {
       if (hours > full) throw validation(['hours'], 'ชั่วโมงเกินของกิจกรรม');
       if (hours < full && !dto.reason) throw validation(['reason'], 'ต้องระบุเหตุผล');
       const name = await this.ensureStudent(c, dto.studentId, dto.name);
-      return writeCredit(c, activity, { studentId: dto.studentId, name, hours, method: 'manual', at: Date.now(), editedBy: user.supName, reason: dto.reason || undefined });
+      return writeCredit(c, activity, { studentId: dto.studentId, name, hours, method: 'manual', at: Date.now(), editedBy: user.supName, reason: dto.reason || undefined, reasonShared: !!dto.shareReason });
     });
     if (!result.ok) return { ok: false, reason: 'already', credit: toCredit(result.row) };
     this.realtime.notify(rooms.afterCredit(activityId));
@@ -203,17 +208,16 @@ export class RosterService {
       if (dto.hours > full) throw validation(['hours'], 'ชั่วโมงเกินของกิจกรรม');
       // The screen sends no reason when giving back full hours; anything less must say why.
       if (dto.hours < full && !dto.reason) throw validation(['reason'], 'ต้องระบุเหตุผล');
-      const updated = await c.query(`UPDATE credits SET hours = $3, reason = $4, edited_by = $5, edited_at = now() WHERE activity_id = $1 AND student_id = $2 RETURNING *`, [
-        activityId,
-        studentId,
-        dto.hours,
-        dto.reason || null,
-        user.supName,
-      ]);
+      const reason = dto.reason || null;
+      const shared = !!reason && !!dto.shareReason;
+      const updated = await c.query(
+        `UPDATE credits SET hours = $3, reason = $4, reason_shared = $6, edited_by = $5, edited_at = now() WHERE activity_id = $1 AND student_id = $2 RETURNING *`,
+        [activityId, studentId, dto.hours, reason, user.supName, shared],
+      );
       // A bottle exchange counts only people with hours, so crossing 0 either way moves the count.
       if (activity.category_key === 'bottle' && Number(current.hours) > 0 !== dto.hours > 0)
         await c.query('UPDATE activities SET credit_count = GREATEST(0, credit_count + $2) WHERE id = $1', [activityId, dto.hours > 0 ? 1 : -1]);
-      await hoursChangedNotice(c, activity, studentId, Number(current.hours), dto.hours, dto.reason);
+      await hoursChangedNotice(c, activity, studentId, Number(current.hours), dto.hours, shared ? reason : null);
       return updated.rows[0];
     });
     this.realtime.notify([rooms.credits(activityId)]);

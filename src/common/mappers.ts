@@ -93,9 +93,16 @@ export const toCredit = (r: Row) =>
     editedBy: opt(r.edited_by),
     editedAt: ms(r.edited_at),
     reason: opt(r.reason),
+    reasonShared: !!r.reason_shared,
   });
 
-export const toMyCredit = (r: Row) => ({ ...toCredit(r), activityId: r.activity_id });
+/** The student's own credit: the supervisor's reason only when they chose to share it. */
+export const toOwnCredit = (r: Row) => {
+  const { reason, reasonShared, ...rest } = toCredit(r);
+  return reasonShared && reason ? { ...rest, reason } : rest;
+};
+
+export const toMyCredit = (r: Row) => ({ ...toOwnCredit(r), activityId: r.activity_id });
 
 /** Another student's row, as a student sees it on the sign-in sheet: who and when only, no flags, reasons or device. */
 export const toCreditForPeer = (r: Row) => ({

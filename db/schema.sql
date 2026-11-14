@@ -96,6 +96,8 @@ create table credits (
   edited_by text,
   edited_at timestamptz,
   reason text,
+  -- The supervisor chose to let the student read the reason (notice and activity page).
+  reason_shared boolean not null default false,
   items integer,
   primary key (activity_id, student_id)
 );

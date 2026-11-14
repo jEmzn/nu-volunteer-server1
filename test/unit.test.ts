@@ -5,7 +5,7 @@ import { cleanName, fmtHours, maskName, newId, thDate, thTime } from '../src/com
 import { assertPoster, base64Bytes, MAX_POSTER_BYTES } from '../src/common/poster';
 import { acceptScannedAt, bottleHours, distanceM, judgeLocation } from '../src/modules/claims/rules';
 import { semesterOf } from '../src/modules/roster/strikes';
-import { adminRows, confirmedAt, distanceText, fileTitle, safeCell, supHeader, supRows, xlsxName } from '../src/modules/export/rows';
+import { adminRows, confirmedAt, distanceText, fileTitle, safeCell, supRows, xlsxName } from '../src/modules/export/rows';
 import { checkTime, makeDynamicToken, makeStaticToken, matchesMode, parseToken, windowOf } from '../src/modules/qr/qr-token';
 
 const SECRET = 'unit-secret-unit-secret-unit-secret';
@@ -296,9 +296,9 @@ describe('Excel rows', () => {
     const rows = supRows(closed, regs, credits, TZ);
     expect(rows.map((r) => r[1])).toEqual(['6', '1', '2', '4', '3']); // oldest credit first, then no-shows in Thai order
     expect(rows.map((r) => r[0])).toEqual([1, 2, 3, 4, 5]);
-    expect(rows[2]).toEqual([3, '2', 'คนมาหลัง', 3, 'ได้ชั่วโมง', '10:00 น.', 'สแกน QR', 'กลับก่อน, ห่าง 413 ม., ใช้เครื่องซ้ำ, ส่งภายหลัง']);
-    expect(rows[0].slice(3)).toEqual([5, 'walk-in', '08:30 น.', 'ผู้ดูแล ข', 'ไม่มีตำแหน่ง']);
-    expect(rows[3].slice(3)).toEqual([0, 'ไม่มา', '', '', '']);
+    expect(rows[2]).toEqual([3, '2', 'คนมาหลัง', 'เก็บขยะ', 'จัดสถานที่', '20 พ.ย. 2569', 3, 'ได้ชั่วโมง', '20 พ.ย. 2569 10:00 น.', 'สแกน QR', 'กลับก่อน, ห่าง 413 ม., ใช้เครื่องซ้ำ, ส่งภายหลัง']);
+    expect(rows[0].slice(6)).toEqual([5, 'walk-in', '20 พ.ย. 2569 08:30 น.', 'ผู้ดูแล ข', 'ไม่มีตำแหน่ง']);
+    expect(rows[3].slice(6)).toEqual([0, 'ไม่มา', '', '', '']);
   });
 
   it('says how many bottles make an hour for someone still below it (N2)', () => {
@@ -308,7 +308,7 @@ describe('Excel rows', () => {
       { ...base, student_id: '2', name: 'ข', method: 'manual', items: 40, hours: 2, at: new Date(Date.UTC(2026, 10, 20, 3)) },
     ];
     const regs = [{ student_id: '2', name: 'ข', walk_in: true, cancelled_at: null }];
-    expect(supRows(bottle, regs, credits, TZ).map((r) => r.slice(3, 5))).toEqual([
+    expect(supRows(bottle, regs, credits, TZ).map((r) => r.slice(6, 8))).toEqual([
       [0, 'ยังไม่ครบ 20 ขวด'],
       [2, 'ได้ชั่วโมง'],
     ]);
@@ -318,9 +318,9 @@ describe('Excel rows', () => {
     const regs = [{ student_id: '3', name: 'ขวัญ', walk_in: false, cancelled_at: null }];
     const open = { ...act, category_key: 'setup', end_at: new Date(Date.UTC(2026, 10, 20, 9)) };
     const during = Date.UTC(2026, 10, 20, 5);
-    expect(supRows(open, regs, [], TZ, during)[0].slice(3, 5)).toEqual([null, 'ยังไม่สแกน']);
-    expect(supRows(open, regs, [], TZ, Date.UTC(2026, 10, 21, 9))[0].slice(3, 5)).toEqual([0, 'ไม่มา']);
-    expect(supRows({ ...open, closed_at: new Date(during) }, regs, [], TZ, during)[0].slice(3, 5)).toEqual([0, 'ไม่มา']);
+    expect(supRows(open, regs, [], TZ, during)[0].slice(6, 8)).toEqual([null, 'ยังไม่สแกน']);
+    expect(supRows(open, regs, [], TZ, Date.UTC(2026, 10, 21, 9))[0].slice(6, 8)).toEqual([0, 'ไม่มา']);
+    expect(supRows({ ...open, closed_at: new Date(during) }, regs, [], TZ, during)[0].slice(6, 8)).toEqual([0, 'ไม่มา']);
   });
 
   it('writes the distance as the app chip does, in kilometres past 1 km (R39)', () => {
@@ -342,34 +342,29 @@ describe('Excel rows', () => {
     expect(fileTitle('สั้น')).toBe('สั้น');
   });
 
-  it('gives the activity once above the table', () => {
-    const day = { ...act, category_key: 'setup', end_at: new Date(Date.UTC(2026, 10, 20, 9)) };
-    expect(supHeader(day, TZ)).toEqual(['เก็บขยะ', '20 พ.ย. 2569 เวลา 08:00 ถึง 16:00 น.', 'หมวด จัดสถานที่', 'หน่วยงาน หน่วยงาน A']);
-    const twoDays = { ...day, end_at: new Date(Date.UTC(2026, 10, 21, 9)) };
-    expect(supHeader(twoDays, TZ)[1]).toBe('20 พ.ย. 2569 08:00 น. ถึง 21 พ.ย. 2569 16:00 น.');
-    expect(supHeader({ ...day, title: '=HYPERLINK("x")' }, TZ)[0]).toBe(`'=HYPERLINK("x")`);
+  it('repeats the activity on every row, through safeCell', () => {
+    const day = { ...act, category_key: 'setup', closed_at: new Date() };
+    const regs = [{ student_id: '1', name: 'ก', walk_in: false, cancelled_at: null }];
+    expect(supRows(day, regs, [], TZ)[0].slice(3, 6)).toEqual(['เก็บขยะ', 'จัดสถานที่', '20 พ.ย. 2569']);
+    expect(supRows({ ...day, title: '=HYPERLINK("x")' }, regs, [], TZ)[0][3]).toBe(`'=HYPERLINK("x")`);
   });
 
-  it('shows the confirm time alone on the activity day, with the short date on another day', () => {
-    const day = { ...act, end_at: new Date(Date.UTC(2026, 10, 20, 9)) };
-    expect(confirmedAt(Date.UTC(2026, 10, 20, 3, 52), day, TZ)).toBe('10:52 น.');
-    expect(confirmedAt(Date.UTC(2026, 10, 22, 3, 52), day, TZ)).toBe('22 พ.ย. 10:52 น.');
+  it('gives the confirm time with the full date', () => {
+    expect(confirmedAt(Date.UTC(2026, 10, 20, 3, 52), TZ)).toBe('20 พ.ย. 2569 10:52 น.');
     // After midnight in Thailand is the next day even though it is the same day in UTC.
-    expect(confirmedAt(Date.UTC(2026, 10, 20, 17, 5), day, TZ)).toBe('21 พ.ย. 00:05 น.');
-    // An activity over several days always says which day.
-    expect(confirmedAt(Date.UTC(2026, 10, 20, 3, 52), { ...day, end_at: new Date(Date.UTC(2026, 10, 21, 9)) }, TZ)).toBe('20 พ.ย. 10:52 น.');
+    expect(confirmedAt(Date.UTC(2026, 10, 20, 17, 5), TZ)).toBe('21 พ.ย. 2569 00:05 น.');
   });
 
   it('never calls anyone unregistered on a bottle activity, with or without a count', () => {
     const rows = supRows(act, [{ student_id: '1', name: 'ก', walk_in: true, cancelled_at: null }], [{ ...base, student_id: '1', name: 'ก', at: new Date(), method: 'manual' }], TZ);
-    expect(rows[0][4]).toBe('ได้ชั่วโมง');
+    expect(rows[0][7]).toBe('ได้ชั่วโมง');
   });
 
   it('notes bottles', () => {
     const rows = supRows(act, [{ student_id: '1', name: 'ก', walk_in: true, cancelled_at: null }], [{ ...base, student_id: '1', name: 'ก', at: new Date(), method: 'manual', items: 45, edited_by: null }], TZ);
-    expect(rows[0][4]).toBe('ได้ชั่วโมง');
-    expect(rows[0][6]).toBe('ผู้ดูแล');
-    expect(rows[0][7]).toBe('45 ขวด');
+    expect(rows[0][7]).toBe('ได้ชั่วโมง');
+    expect(rows[0][9]).toBe('ผู้ดูแล');
+    expect(rows[0][10]).toBe('45 ขวด');
   });
 
   it('builds the centre file with earners only, by student id', () => {

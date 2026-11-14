@@ -6,7 +6,7 @@ import { AppConfig } from '../../common/config';
 import { ACTIVITY_RULE_COLUMNS, DbService, lockActivity, Row } from '../../common/db.service';
 import { ApiError, rosterLocked } from '../../common/errors';
 import { Bool, MAX_TIME_MS, Num, Str } from '../../common/fields';
-import { toCredit } from '../../common/mappers';
+import { toOwnCredit } from '../../common/mappers';
 import { CLAIMS_LIMIT } from '../../common/rate-limit';
 import { checkTime, matchesMode, parseToken } from '../qr/qr-token';
 import { RealtimeService, rooms } from '../realtime/realtime';
@@ -88,9 +88,9 @@ export class ClaimsService {
       });
     });
 
-    if (!result.ok) return { ok: false, reason: 'already', credit: toCredit(result.row) };
+    if (!result.ok) return { ok: false, reason: 'already', credit: toOwnCredit(result.row) };
     this.realtime.notify(rooms.afterCredit(payload.a));
-    return { ok: true, credit: toCredit(result.row) };
+    return { ok: true, credit: toOwnCredit(result.row) };
   }
 }
 
