@@ -64,6 +64,13 @@ export function distanceText(m: number) {
   return r < 1000 ? `ห่าง ${r} ม.` : `ห่าง ${(r / 1000).toLocaleString('th-TH', { maximumFractionDigits: 1 })} กม.`;
 }
 
+/** The status cell. A bottle exchange below one hour says how many bottles make an hour, not "ได้ชั่วโมง" next to 0 (N2). */
+function status(activity: Row, reg: Row | undefined, c: Row | undefined, closed: boolean) {
+  if (!c) return closed ? 'ไม่มา' : 'ยังไม่สแกน';
+  if (activity.category_key === 'bottle') return Number(c.hours) > 0 ? 'ได้ชั่วโมง' : `ยังไม่ครบ ${activity.items_per_hour} ขวด`;
+  return reg?.walk_in ? 'walk-in' : 'ได้ชั่วโมง';
+}
+
 export function supRows(activity: Row, regs: Row[], credits: Row[], tz: string, now = Date.now()): (string | number | null)[][] {
   const closed = rosterClosed(activity, now);
   const people = new Map<string, { id: string; name: string; reg?: Row; credit?: Row }>();
@@ -88,7 +95,7 @@ export function supRows(activity: Row, regs: Row[], credits: Row[], tz: string, 
       p.name,
       // An empty cell, not 0, while they may still come.
       c ? Number(c.hours) : closed ? 0 : null,
-      !c ? (closed ? 'ไม่มา' : 'ยังไม่สแกน') : p.reg?.walk_in && activity.category_key !== 'bottle' ? 'walk-in' : 'ได้ชั่วโมง',
+      status(activity, p.reg, c, closed),
       c ? confirmedAt(new Date(c.at).getTime(), activity, tz) : '',
       !c ? '' : c.method === 'qr' ? 'สแกน QR' : (c.edited_by ?? 'ผู้ดูแล'),
       notes.join(', '),

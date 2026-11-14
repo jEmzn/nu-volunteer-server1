@@ -38,7 +38,7 @@ export class ExportService {
 
   async build(user: SupUser, activityId: string, kind: string | undefined) {
     if (kind !== 'sup' && kind !== 'admin') throw validation(['kind']);
-    const activity = await this.db.one('SELECT id, title, org, org_code, category_key, start_at, end_at, closed_at FROM activities WHERE id = $1', [activityId]);
+    const activity = await this.db.one('SELECT id, title, org, org_code, category_key, items_per_hour, start_at, end_at, closed_at FROM activities WHERE id = $1', [activityId]);
     if (!activity) throw notFound('ไม่พบกิจกรรม');
     if (kind === 'admin' && !user.admin) throw forbidden('ไฟล์นี้สำหรับผู้ดูแลศูนย์');
     assertOwner(user, activity);

@@ -301,6 +301,19 @@ describe('Excel rows', () => {
     expect(rows[3].slice(3)).toEqual([0, 'ไม่มา', '', '', '']);
   });
 
+  it('says how many bottles make an hour for someone still below it (N2)', () => {
+    const bottle = { ...act, items_per_hour: 20, closed_at: new Date() };
+    const credits = [
+      { ...base, student_id: '1', name: 'ก', method: 'manual', items: 12, hours: 0, at: new Date(Date.UTC(2026, 10, 20, 2)) },
+      { ...base, student_id: '2', name: 'ข', method: 'manual', items: 40, hours: 2, at: new Date(Date.UTC(2026, 10, 20, 3)) },
+    ];
+    const regs = [{ student_id: '2', name: 'ข', walk_in: true, cancelled_at: null }];
+    expect(supRows(bottle, regs, credits, TZ).map((r) => r.slice(3, 5))).toEqual([
+      [0, 'ยังไม่ครบ 20 ขวด'],
+      [2, 'ได้ชั่วโมง'],
+    ]);
+  });
+
   it('calls nobody a no-show until the roster closes, by hand or a day after the end (R15)', () => {
     const regs = [{ student_id: '3', name: 'ขวัญ', walk_in: false, cancelled_at: null }];
     const open = { ...act, category_key: 'setup', end_at: new Date(Date.UTC(2026, 10, 20, 9)) };

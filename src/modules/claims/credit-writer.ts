@@ -87,7 +87,8 @@ export async function writeCredit(c: PoolClient, activity: Row, input: CreditInp
     return { ok: false, row: again.rows[0] };
   }
 
-  await c.query('UPDATE activities SET credit_count = credit_count + 1 WHERE id = $1', [activityId]);
+  // A bottle exchange counts someone once their bottles reach an hour, not at the first bottle (N2).
+  if (activity.category_key !== 'bottle' || input.hours > 0) await c.query('UPDATE activities SET credit_count = credit_count + 1 WHERE id = $1', [activityId]);
 
   const reg = await c.query('SELECT cancelled_at FROM registrations WHERE activity_id = $1 AND student_id = $2', [activityId, input.studentId]);
   if (!reg.rows[0] || reg.rows[0].cancelled_at) {

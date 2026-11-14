@@ -210,6 +210,9 @@ export class RosterService {
         dto.reason || null,
         user.supName,
       ]);
+      // A bottle exchange counts only people with hours, so crossing 0 either way moves the count.
+      if (activity.category_key === 'bottle' && Number(current.hours) > 0 !== dto.hours > 0)
+        await c.query('UPDATE activities SET credit_count = GREATEST(0, credit_count + $2) WHERE id = $1', [activityId, dto.hours > 0 ? 1 : -1]);
       await hoursChangedNotice(c, activity, studentId, Number(current.hours), dto.hours, dto.reason);
       return updated.rows[0];
     });
@@ -249,6 +252,7 @@ export class RosterService {
         items,
         user.supName,
       ]);
+      if (Number(current.hours) === 0 && hours > 0) await c.query('UPDATE activities SET credit_count = credit_count + 1 WHERE id = $1', [activityId]);
       // The first save may have been below one hour, so this can be when the student first hears about it.
       await hoursChangedNotice(c, activity, dto.studentId, Number(current.hours), hours);
       return updated.rows[0];
@@ -304,8 +308,10 @@ export class RosterService {
   }
 
   private async deleteCredit(c: PoolClient, activityId: string, studentId: string) {
-    const removed = await c.query('DELETE FROM credits WHERE activity_id = $1 AND student_id = $2', [activityId, studentId]);
-    if (removed.rowCount) await c.query('UPDATE activities SET credit_count = GREATEST(0, credit_count - 1) WHERE id = $1', [activityId]);
+    const removed = await c.query('DELETE FROM credits WHERE activity_id = $1 AND student_id = $2 RETURNING hours', [activityId, studentId]);
+    // A bottle credit below one hour was never counted.
+    if (removed.rowCount)
+      await c.query("UPDATE activities SET credit_count = GREATEST(0, credit_count - 1) WHERE id = $1 AND (category_key <> 'bottle' OR $2::numeric > 0)", [activityId, removed.rows[0].hours]);
   }
 
   /** A supervisor can add someone who never opened the app. A known id always keeps the stored name. */

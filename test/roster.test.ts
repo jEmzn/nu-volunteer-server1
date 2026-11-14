@@ -615,8 +615,19 @@ describe('bottles', () => {
     const first = (await add(19).expect(200)).body;
     expect(first).toMatchObject({ items: 19, hours: 0 });
     expect(first.credit).toMatchObject({ method: 'manual', items: 19, hours: 0, fullHours: 3, editedBy: 'ผู้ดูแล ก' });
+    // Below one hour nobody is counted as having hours yet (N2).
+    expect((await activityRow(app, id)).credit_count).toBe(0);
     expect((await add(1).expect(200)).body).toMatchObject({ items: 20, hours: 1 });
     expect((await activityRow(app, id)).credit_count).toBe(1);
+  });
+
+  it('counts someone only while they have hours, through edits and removal (N2)', async () => {
+    await add(20).expect(200);
+    expect((await activityRow(app, id)).credit_count).toBe(1);
+    await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 0, reason: 'ขวดไม่สะอาด' }).expect(200);
+    expect((await activityRow(app, id)).credit_count).toBe(0);
+    await api(app, owner).delete(`/activities/${id}/credits/65000001`).expect(200);
+    expect((await activityRow(app, id)).credit_count).toBe(0);
   });
 
   it('stops at the activity hours', async () => {
