@@ -6,14 +6,28 @@ import { assertOwner, CurrentUser, Roles, SupUser } from '../../common/auth';
 import { AppConfig } from '../../common/config';
 import { DbService } from '../../common/db.service';
 import { forbidden, notFound, validation } from '../../common/errors';
-import { ADMIN_COLUMNS, ADMIN_WIDTHS, adminRows, SUP_COLUMNS, SUP_WIDTHS, supRows } from './rows';
+import { ADMIN_COLUMNS, ADMIN_WIDTHS, adminRows, SUP_COLUMNS, SUP_WIDTHS, supHeader, supRows } from './rows';
 
-async function workbook(sheet: string, columns: readonly string[], widths: number[], rows: (string | number)[][]) {
+/**
+ * One sheet. `header` lines go above the table, the first as the title, then one empty row. With them, the table's
+ * header row stays in view while scrolling and has filters, so the rows can still be sorted. Without, a plain table.
+ */
+async function workbook(sheet: string, columns: readonly string[], widths: number[], rows: (string | number)[][], header: string[] = []) {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet(sheet);
-  ws.columns = columns.map((header, i) => ({ header, width: widths[i] }));
-  ws.getRow(1).font = { bold: true };
+  ws.columns = widths.map((width) => ({ width }));
+  header.forEach((line, i) => {
+    const row = ws.addRow([line]);
+    row.font = i === 0 ? { bold: true, size: 14 } : { size: 11 };
+  });
+  if (header.length) ws.addRow([]);
+  const head = ws.addRow([...columns]);
+  head.font = { bold: true };
   ws.addRows(rows);
+  if (header.length) {
+    ws.views = [{ state: 'frozen', ySplit: head.number }];
+    ws.autoFilter = { from: { row: head.number, column: 1 }, to: { row: head.number + rows.length, column: columns.length } };
+  }
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
@@ -26,7 +40,7 @@ export class ExportService {
 
   async build(user: SupUser, activityId: string, kind: string | undefined) {
     if (kind !== 'sup' && kind !== 'admin') throw validation(['kind']);
-    const activity = await this.db.one('SELECT id, title, org, org_code, category_key, start_at FROM activities WHERE id = $1', [activityId]);
+    const activity = await this.db.one('SELECT id, title, org, org_code, category_key, start_at, end_at FROM activities WHERE id = $1', [activityId]);
     if (!activity) throw notFound('ไม่พบกิจกรรม');
     if (kind === 'admin' && !user.admin) throw forbidden('ไฟล์นี้สำหรับผู้ดูแลศูนย์');
     assertOwner(user, activity);
@@ -37,7 +51,7 @@ export class ExportService {
       return { name: `${title} บันทึกชั่วโมง.xlsx`, data: await workbook('บันทึกชั่วโมง', ADMIN_COLUMNS, ADMIN_WIDTHS, adminRows(activity, credits, this.config.tzDisplay)) };
     }
     const regs = (await this.db.query('SELECT * FROM registrations WHERE activity_id = $1', [activityId])).rows;
-    return { name: `${title} รายชื่อ.xlsx`, data: await workbook('รายชื่อ', SUP_COLUMNS, SUP_WIDTHS, supRows(activity, regs, credits, this.config.tzDisplay)) };
+    return { name: `${title} รายชื่อ.xlsx`, data: await workbook('รายชื่อ', SUP_COLUMNS, SUP_WIDTHS, supRows(activity, regs, credits, this.config.tzDisplay), supHeader(activity, this.config.tzDisplay)) };
   }
 }
 
@@ -49,7 +63,7 @@ export class ExportController {
   @Get()
   @Roles('sup')
   @ApiQuery({ name: 'kind', enum: ['sup', 'admin'] })
-  @ApiOperation({ summary: 'ไฟล์ Excel: sup 11 คอลัมน์ (owner/admin), admin 7 คอลัมน์ (ผู้ดูแลศูนย์)' })
+  @ApiOperation({ summary: 'ไฟล์ Excel: sup หัวไฟล์บอกกิจกรรมแล้วตาราง 8 คอลัมน์ (owner/admin), admin 7 คอลัมน์ (ผู้ดูแลศูนย์)' })
   async export(@CurrentUser() user: SupUser, @Param('id') id: string, @Query('kind') kind: string | undefined, @Res({ passthrough: true }) res: Response) {
     const { name, data } = await this.exports.build(user, id, kind);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

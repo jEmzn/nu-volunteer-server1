@@ -860,19 +860,30 @@ describe('Excel files', () => {
     await dbOf(app).query('UPDATE activities SET start_at = $2, end_at = $3 WHERE id = $1', [id, new Date(Date.UTC(2026, 10, 20, 1)), new Date(Date.UTC(2026, 10, 20, 8))]);
   });
 
-  it('the supervisor file has 11 columns in order, Thai intact, formulas stopped', async () => {
+  it('the supervisor file gives the activity once on top, then 8 columns in order, Thai intact, formulas stopped', async () => {
     const res = await download(api(app, owner).get(`/activities/${id}/export?kind=sup`).expect(200));
     expect(res.headers['content-type']).toContain('spreadsheetml');
     expect(decodeURIComponent(res.headers['content-disposition'])).toContain('เก็บขยะริมน้ำ รายชื่อ.xlsx');
     const rows = await read(res.body);
-    expect(rows[0]).toEqual(['ลำดับ', 'รหัสนิสิต', 'ชื่อ', 'กิจกรรม', 'หมวด', 'วันที่', 'ชั่วโมง', 'สถานะ', 'เวลายืนยัน', 'ยืนยันโดย', 'หมายเหตุ']);
-    expect(rows).toHaveLength(4);
-    const byId = Object.fromEntries(rows.slice(1).map((r) => [r[1], r]));
-    expect(byId['65000002'].slice(1, 8)).toEqual(['65000002', 'สมหญิง รักเรียน', 'เก็บขยะริมน้ำ', 'จัดสถานที่', '20 พ.ย. 2569', 3, 'ได้ชั่วโมง (ไม่ได้ลงทะเบียน)']);
-    expect(byId['65000002'][8]).toMatch(/^\d{1,2} \S+ \d{4} \d{2}:\d{2} น\.$/);
-    expect(byId['65000002'][9]).toBe('ผู้ดูแล ก');
+    expect(rows.slice(0, 4).map((r) => r[0])).toEqual(['เก็บขยะริมน้ำ', '20 พ.ย. 2569 เวลา 08:00–15:00 น.', 'หมวด จัดสถานที่', expect.stringMatching(/^หน่วยงาน \S/)]);
+    expect(rows[4]).toEqual(['ลำดับ', 'รหัสนิสิต', 'ชื่อ', 'ชั่วโมง', 'สถานะ', 'เวลายืนยัน', 'ยืนยันโดย', 'หมายเหตุ']);
+    expect(rows).toHaveLength(8);
+    const byId = Object.fromEntries(rows.slice(5).map((r) => [r[1], r]));
+    expect(byId['65000002'].slice(1, 5)).toEqual(['65000002', 'สมหญิง รักเรียน', 3, 'walk-in']);
+    // Added by hand before the activity's day: the short date and the time, no year.
+    expect(byId['65000002'][5]).toMatch(/^\d{1,2} \S+ \d{2}:\d{2} น\.$/);
+    expect(byId['65000002'][6]).toBe('ผู้ดูแล ก');
     expect(byId['65000001'][2]).toBe("'=SUM(1)");
-    expect(byId['65000003'].slice(6, 8)).toEqual([0, 'ไม่มา']);
+    expect(byId['65000003'].slice(3, 5)).toEqual([0, 'ไม่มา']);
+
+    // The table header stays in view and can be filtered.
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(res.body as any);
+    const ws = wb.worksheets[0];
+    expect(ws.getRow(5).getCell(1).value).toBe(null);
+    expect(ws.getRow(6).getCell(1).value).toBe('ลำดับ');
+    expect(ws.views[0]).toMatchObject({ state: 'frozen', ySplit: 6 });
+    expect(ws.autoFilter).toBeTruthy();
   });
 
   it('the centre file has 7 columns, earners only, by id', async () => {
