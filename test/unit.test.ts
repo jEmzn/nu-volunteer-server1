@@ -5,7 +5,7 @@ import { cleanName, fmtHours, maskName, newId, thDate, thTime } from '../src/com
 import { assertPoster, base64Bytes, MAX_POSTER_BYTES } from '../src/common/poster';
 import { acceptScannedAt, bottleHours, distanceM, judgeLocation } from '../src/modules/claims/rules';
 import { semesterOf } from '../src/modules/roster/strikes';
-import { adminRows, confirmedAt, fileTitle, safeCell, supHeader, supRows, xlsxName } from '../src/modules/export/rows';
+import { adminRows, confirmedAt, distanceText, fileTitle, safeCell, supHeader, supRows, xlsxName } from '../src/modules/export/rows';
 import { checkTime, makeDynamicToken, makeStaticToken, matchesMode, parseToken, windowOf } from '../src/modules/qr/qr-token';
 
 const SECRET = 'unit-secret-unit-secret-unit-secret';
@@ -296,7 +296,7 @@ describe('Excel rows', () => {
     const rows = supRows(closed, regs, credits, TZ);
     expect(rows.map((r) => r[1])).toEqual(['6', '1', '2', '4', '3']); // oldest credit first, then no-shows in Thai order
     expect(rows.map((r) => r[0])).toEqual([1, 2, 3, 4, 5]);
-    expect(rows[2]).toEqual([3, '2', 'คนมาหลัง', 3, 'ได้ชั่วโมง', '10:00 น.', 'สแกน QR', 'กลับก่อน, อยู่นอกพื้นที่ 413 ม., ใช้เครื่องซ้ำ, ส่งภายหลัง']);
+    expect(rows[2]).toEqual([3, '2', 'คนมาหลัง', 3, 'ได้ชั่วโมง', '10:00 น.', 'สแกน QR', 'กลับก่อน, ห่าง 413 ม., ใช้เครื่องซ้ำ, ส่งภายหลัง']);
     expect(rows[0].slice(3)).toEqual([5, 'walk-in', '08:30 น.', 'ผู้ดูแล ข', 'ไม่มีตำแหน่ง']);
     expect(rows[3].slice(3)).toEqual([0, 'ไม่มา', '', '', '']);
   });
@@ -308,6 +308,11 @@ describe('Excel rows', () => {
     expect(supRows(open, regs, [], TZ, during)[0].slice(3, 5)).toEqual([null, 'ยังไม่สแกน']);
     expect(supRows(open, regs, [], TZ, Date.UTC(2026, 10, 21, 9))[0].slice(3, 5)).toEqual([0, 'ไม่มา']);
     expect(supRows({ ...open, closed_at: new Date(during) }, regs, [], TZ, during)[0].slice(3, 5)).toEqual([0, 'ไม่มา']);
+  });
+
+  it('writes the distance as the app chip does, in kilometres past 1 km (R39)', () => {
+    expect(distanceText(413.2)).toBe('ห่าง 413 ม.');
+    expect(distanceText(10714)).toBe('ห่าง 10.7 กม.');
   });
 
   it('names files by kind, the activity day and the title cut between words (R22)', () => {

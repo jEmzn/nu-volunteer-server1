@@ -58,6 +58,12 @@ export function rosterClosed(activity: Row, now: number) {
  * One row per person, numbered in the order hours were given (oldest first, as on the student's roster), then everyone
  * without hours in Thai name order. Before the roster closes they have not scanned yet; after, they did not come.
  */
+/** Same words as the app's roster chip: "ห่าง 213 ม.", "ห่าง 10.7 กม.". */
+export function distanceText(m: number) {
+  const r = Math.round(m);
+  return r < 1000 ? `ห่าง ${r} ม.` : `ห่าง ${(r / 1000).toLocaleString('th-TH', { maximumFractionDigits: 1 })} กม.`;
+}
+
 export function supRows(activity: Row, regs: Row[], credits: Row[], tz: string, now = Date.now()): (string | number | null)[][] {
   const closed = rosterClosed(activity, now);
   const people = new Map<string, { id: string; name: string; reg?: Row; credit?: Row }>();
@@ -72,7 +78,7 @@ export function supRows(activity: Row, regs: Row[], credits: Row[], tz: string, 
     const notes = [
       c && c.items !== null && c.items !== undefined && `${c.items} ขวด`,
       c?.reason,
-      flags.includes('location') && (typeof c?.distance === 'number' ? `อยู่นอกพื้นที่ ${Math.round(c.distance)} ม.` : 'ไม่มีตำแหน่ง'),
+      flags.includes('location') && (typeof c?.distance === 'number' ? distanceText(c.distance) : 'ไม่มีตำแหน่ง'),
       flags.includes('device') && 'ใช้เครื่องซ้ำ',
       flags.includes('offline') && 'ส่งภายหลัง',
     ].filter(Boolean);
