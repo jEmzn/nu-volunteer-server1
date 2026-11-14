@@ -39,7 +39,7 @@ export const creditNotice = (c: PoolClient, activity: Row, studentId: string, ho
 export async function hoursChangedNotice(c: PoolClient, activity: Row, studentId: string, oldHours: number, newHours: number, reason?: string | null) {
   if (newHours === oldHours) return;
   if (oldHours === 0) return creditNotice(c, activity, studentId, newHours, reason);
-  const title = activity.category_key === 'bottle' && newHours > oldHours ? `ได้รับรวม ${fmtHours(newHours)} ชม.` : `แก้ชั่วโมงเป็น ${fmtHours(newHours)} ชม.`;
+  const title = activity.category_key === 'bottle' && newHours > oldHours ? `ได้รับรวม ${fmtHours(newHours)} ชั่วโมง` : `แก้ชั่วโมงเป็น ${fmtHours(newHours)} ชั่วโมง`;
   await c.query(`INSERT INTO notices (student_id, kind, title, body, activity_id) VALUES ($1, 'credit', $2, $3, $4)`, [studentId, title, noticeBody(activity, reason), activity.id]);
 }
 

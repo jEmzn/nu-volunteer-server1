@@ -533,7 +533,7 @@ describe('editing hours', () => {
     await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 3, reason: 'กลับก่อนเวลา' }).expect(200);
     await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 0, reason: 'ไม่ได้ทำงาน' }).expect(200);
     const notices = await noticesOf(app, '65000001');
-    expect(notices.map((n) => n.title)).toEqual(['ได้รับ 6 ชั่วโมง', 'แก้ชั่วโมงเป็น 3 ชม.', 'แก้ชั่วโมงเป็น 0 ชม.']);
+    expect(notices.map((n) => n.title)).toEqual(['ได้รับ 6 ชั่วโมง', 'แก้ชั่วโมงเป็น 3 ชั่วโมง', 'แก้ชั่วโมงเป็น 0 ชั่วโมง']);
     // The student sees why, not only the new number (R4).
     expect(notices[1].body).toMatch(/\nเหตุผล: กลับก่อน$/);
     expect(notices[2].body).toMatch(/\nเหตุผล: ไม่ได้ทำงาน$/);
@@ -641,7 +641,7 @@ describe('bottles', () => {
     await add(5).expect(200);
     await add(15).expect(200);
     const notices = await noticesOf(app, '65000001');
-    expect(notices.map((n) => n.title)).toEqual(['ได้รับ 1 ชั่วโมง', 'ได้รับรวม 2 ชม.']);
+    expect(notices.map((n) => n.title)).toEqual(['ได้รับ 1 ชั่วโมง', 'ได้รับรวม 2 ชั่วโมง']);
     expect(notices[1].body).not.toContain('เหตุผล');
     expect(notices.every((n) => n.kind === 'credit')).toBe(true);
   });
