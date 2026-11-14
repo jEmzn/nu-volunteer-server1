@@ -60,7 +60,7 @@ export function supRows(activity: Row, regs: Row[], credits: Row[], tz: string):
       c && c.items !== null && c.items !== undefined && `${c.items} ขวด`,
       c?.reason,
       flags.includes('location') && (typeof c?.distance === 'number' ? `อยู่นอกพื้นที่ ${Math.round(c.distance)} ม.` : 'ไม่มีตำแหน่ง'),
-      flags.includes('device') && 'เครื่องซ้ำ',
+      flags.includes('device') && 'ใช้เครื่องซ้ำ',
       flags.includes('offline') && 'ส่งภายหลัง',
     ].filter(Boolean);
     return [

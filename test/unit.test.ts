@@ -294,7 +294,7 @@ describe('Excel rows', () => {
     ];
     const rows = supRows({ ...act, category_key: 'setup' }, regs, credits, TZ);
     expect(rows.map((r) => r[1])).toEqual(['2', '1', '6', '4', '3']); // newest credit first, then no-shows in Thai order
-    expect(rows[0]).toEqual([1, '2', 'คนมาหลัง', 3, 'ได้ชั่วโมง', '10:00 น.', 'สแกน QR', 'กลับก่อน, อยู่นอกพื้นที่ 413 ม., เครื่องซ้ำ, ส่งภายหลัง']);
+    expect(rows[0]).toEqual([1, '2', 'คนมาหลัง', 3, 'ได้ชั่วโมง', '10:00 น.', 'สแกน QR', 'กลับก่อน, อยู่นอกพื้นที่ 413 ม., ใช้เครื่องซ้ำ, ส่งภายหลัง']);
     expect(rows[2].slice(3)).toEqual([5, 'walk-in', '08:30 น.', 'ผู้ดูแล ข', 'ไม่มีตำแหน่ง']);
     expect(rows[3].slice(3)).toEqual([0, 'ไม่มา', '', '', '']);
   });
