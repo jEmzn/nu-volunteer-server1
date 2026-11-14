@@ -51,3 +51,16 @@ export function thTime(ms: number, tz: string) {
   const p = zonedParts(ms, tz);
   return `${p.hour.padStart(2, '0')}:${p.minute.padStart(2, '0')}`;
 }
+
+/** "20 พ.ย." in the display time zone, for a date the reader can place without the year. */
+export function thDayMonth(ms: number, tz: string) {
+  const p = zonedParts(ms, tz);
+  return `${Number(p.day)} ${MONTHS[Number(p.month) - 1]}`;
+}
+
+/** Both times fall on the same calendar day in the display time zone. */
+export function sameDay(a: number, b: number, tz: string) {
+  const x = zonedParts(a, tz);
+  const y = zonedParts(b, tz);
+  return x.year === y.year && x.month === y.month && x.day === y.day;
+}

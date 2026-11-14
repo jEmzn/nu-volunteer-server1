@@ -17,18 +17,35 @@ export interface CreditInput {
   editedBy?: string;
   items?: number;
   reason?: string;
+  /** Let the student read the reason. */
+  reasonShared?: boolean;
 }
 
 export type WriteResult = { ok: true; row: Row } | { ok: false; row: Row };
 
-export const creditNotice = (c: PoolClient, activity: Row, studentId: string, hours: number) =>
-  c.query(`INSERT INTO notices (student_id, kind, title, body, activity_id) VALUES ($1, 'credit', $2, $3, $4)`, [studentId, `ได้รับ ${fmtHours(hours)} ชั่วโมง`, activity.title, activity.id]);
+/**
+ * The activity, then "เหตุผล: <reason>" on its own line when the supervisor chose to share it. Callers pass a reason only
+ * when it is shared; otherwise the activity alone.
+ */
+const noticeBody = (activity: Row, sharedReason?: string | null) => (sharedReason ? `${activity.title}\nเหตุผล: ${sharedReason}` : activity.title);
 
-/** Tells the student when hours they already heard about change. The first hours above 0 read as "ได้รับ". */
-export async function hoursChangedNotice(c: PoolClient, activity: Row, studentId: string, oldHours: number, newHours: number) {
+export const creditNotice = (c: PoolClient, activity: Row, studentId: string, hours: number, sharedReason?: string | null) =>
+  c.query(`INSERT INTO notices (student_id, kind, title, body, activity_id) VALUES ($1, 'credit', $2, $3, $4)`, [
+    studentId,
+    `ได้รับ ${fmtHours(hours)} ชั่วโมง`,
+    noticeBody(activity, sharedReason),
+    activity.id,
+  ]);
+
+/**
+ * Tells the student when hours they already heard about change, with the reason only if the supervisor shared it.
+ * The first hours above 0 read as "ได้รับ"; more bottles read as a new total rather than an edit.
+ */
+export async function hoursChangedNotice(c: PoolClient, activity: Row, studentId: string, oldHours: number, newHours: number, sharedReason?: string | null) {
   if (newHours === oldHours) return;
-  if (oldHours === 0) return creditNotice(c, activity, studentId, newHours);
-  await c.query(`INSERT INTO notices (student_id, kind, title, body, activity_id) VALUES ($1, 'credit', $2, $3, $4)`, [studentId, `ชั่วโมงเปลี่ยนเป็น ${fmtHours(newHours)} ชั่วโมง`, activity.title, activity.id]);
+  if (oldHours === 0) return creditNotice(c, activity, studentId, newHours, sharedReason);
+  const title = activity.category_key === 'bottle' && newHours > oldHours ? `ได้รับรวม ${fmtHours(newHours)} ชั่วโมง` : `แก้ชั่วโมงเป็น ${fmtHours(newHours)} ชั่วโมง`;
+  await c.query(`INSERT INTO notices (student_id, kind, title, body, activity_id) VALUES ($1, 'credit', $2, $3, $4)`, [studentId, title, noticeBody(activity, sharedReason), activity.id]);
 }
 
 /**
@@ -47,8 +64,8 @@ export async function writeCredit(c: PoolClient, activity: Row, input: CreditInp
   }
 
   const inserted = await c.query(
-    `INSERT INTO credits (activity_id, student_id, name, hours, full_hours, at, method, distance, accuracy, flags, device_id, ref, edited_by, items, reason)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+    `INSERT INTO credits (activity_id, student_id, name, hours, full_hours, at, method, distance, accuracy, flags, device_id, ref, edited_by, items, reason, reason_shared)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
      ON CONFLICT (activity_id, student_id) DO NOTHING
      RETURNING *`,
     [
@@ -67,6 +84,7 @@ export async function writeCredit(c: PoolClient, activity: Row, input: CreditInp
       input.editedBy ?? null,
       input.items ?? null,
       input.reason ?? null,
+      !!input.reason && !!input.reasonShared,
     ],
   );
   const row = inserted.rows[0];
@@ -75,7 +93,8 @@ export async function writeCredit(c: PoolClient, activity: Row, input: CreditInp
     return { ok: false, row: again.rows[0] };
   }
 
-  await c.query('UPDATE activities SET credit_count = credit_count + 1 WHERE id = $1', [activityId]);
+  // A bottle exchange counts someone once their bottles reach an hour, not at the first bottle (N2).
+  if (activity.category_key !== 'bottle' || input.hours > 0) await c.query('UPDATE activities SET credit_count = credit_count + 1 WHERE id = $1', [activityId]);
 
   const reg = await c.query('SELECT cancelled_at FROM registrations WHERE activity_id = $1 AND student_id = $2', [activityId, input.studentId]);
   if (!reg.rows[0] || reg.rows[0].cancelled_at) {
@@ -87,6 +106,6 @@ export async function writeCredit(c: PoolClient, activity: Row, input: CreditInp
     );
   }
 
-  if (input.hours > 0) await creditNotice(c, activity, input.studentId, input.hours);
+  if (input.hours > 0) await creditNotice(c, activity, input.studentId, input.hours, input.reasonShared ? input.reason : null);
   return { ok: true, row };
 }

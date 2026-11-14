@@ -532,8 +532,67 @@ describe('editing hours', () => {
     await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 3, reason: 'กลับก่อน' }).expect(200);
     await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 3, reason: 'กลับก่อนเวลา' }).expect(200);
     await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 0, reason: 'ไม่ได้ทำงาน' }).expect(200);
-    const titles = (await noticesOf(app, '65000001')).map((n) => n.title);
-    expect(titles).toEqual(['ได้รับ 6 ชั่วโมง', 'ชั่วโมงเปลี่ยนเป็น 3 ชั่วโมง', 'ชั่วโมงเปลี่ยนเป็น 0 ชั่วโมง']);
+    const notices = await noticesOf(app, '65000001');
+    expect(notices.map((n) => n.title)).toEqual(['ได้รับ 6 ชั่วโมง', 'แก้ชั่วโมงเป็น 3 ชั่วโมง', 'แก้ชั่วโมงเป็น 0 ชั่วโมง']);
+    // The supervisor's reason is not shown to the student.
+    expect(notices.every((n) => !n.body.includes('เหตุผล'))).toBe(true);
+  });
+});
+
+describe('sharing the reason with the student', () => {
+  let owner: string;
+  let me: string;
+  let id: string;
+  const own = async () => (await api(app, me).get(`/activities/${id}/credits/65000001`).expect(200)).body;
+  const mine = async () => (await api(app, me).get('/students/me/credits').expect(200)).body.find((c: { activityId: string }) => c.activityId === id);
+  const listed = async () => (await api(app, me).get(`/activities/${id}/credits`).expect(200)).body.find((c: { studentId: string }) => c.studentId === '65000001');
+  beforeEach(async () => {
+    owner = await sup(app);
+    me = await student(app);
+    id = await newActivity(app, owner);
+    await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000001', name: 'ก' }).expect(200);
+  });
+
+  it('keeps the reason from the student by default, and tells the supervisor it is not shared', async () => {
+    const res = (await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 3, reason: 'กลับก่อน' }).expect(200)).body;
+    expect(res).toMatchObject({ reason: 'กลับก่อน', reasonShared: false });
+    expect(await creditRow(app, id, '65000001')).toMatchObject({ reason: 'กลับก่อน', reason_shared: false });
+    for (const c of [await own(), await mine(), await listed()]) {
+      expect(c.hours).toBe(3);
+      expect(c).not.toHaveProperty('reason');
+      expect(c).not.toHaveProperty('reasonShared');
+    }
+    const notice = (await noticesOf(app, '65000001')).find((n) => n.title === 'แก้ชั่วโมงเป็น 3 ชั่วโมง')!;
+    expect(notice.body).not.toContain('เหตุผล');
+  });
+
+  it('shows the reason on the student side and in the notice when the supervisor shares it', async () => {
+    const res = (await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 3, reason: 'กลับก่อน', shareReason: true }).expect(200)).body;
+    expect(res).toMatchObject({ reason: 'กลับก่อน', reasonShared: true });
+    for (const c of [await own(), await mine(), await listed()]) expect(c.reason).toBe('กลับก่อน');
+    const title = (await activityRow(app, id)).title;
+    const notice = (await noticesOf(app, '65000001')).find((n) => n.title === 'แก้ชั่วโมงเป็น 3 ชั่วโมง')!;
+    expect(notice.body).toBe(`${title}\nเหตุผล: กลับก่อน`);
+
+    // Turned off again: hidden again.
+    await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 2, reason: 'กลับก่อน' }).expect(200);
+    expect(await own()).not.toHaveProperty('reason');
+  });
+
+  it('shares a reason given when adding someone by hand, and never shows it to other students', async () => {
+    await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000002', name: 'ข', hours: 4, reason: 'มาสาย', shareReason: true }).expect(200);
+    const other = await student(app, '65000002', 'ข');
+    expect((await api(app, other).get(`/activities/${id}/credits/65000002`).expect(200)).body.reason).toBe('มาสาย');
+    const notice = (await noticesOf(app, '65000002')).find((n) => n.kind === 'credit')!;
+    expect(notice.body).toMatch(/\nเหตุผล: มาสาย$/);
+    // From 65000001's side, 65000002 is a peer: no reason.
+    const peer = (await api(app, me).get(`/activities/${id}/credits`).expect(200)).body.find((c: { studentId: string }) => c.studentId === '65000002');
+    expect(peer).not.toHaveProperty('reason');
+  });
+
+  it('shares nothing when there is no reason to share', async () => {
+    await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 6, shareReason: true }).expect(200);
+    expect(await creditRow(app, id, '65000001')).toMatchObject({ reason: null, reason_shared: false });
   });
 });
 
@@ -612,8 +671,19 @@ describe('bottles', () => {
     const first = (await add(19).expect(200)).body;
     expect(first).toMatchObject({ items: 19, hours: 0 });
     expect(first.credit).toMatchObject({ method: 'manual', items: 19, hours: 0, fullHours: 3, editedBy: 'ผู้ดูแล ก' });
+    // Below one hour nobody is counted as having hours yet (N2).
+    expect((await activityRow(app, id)).credit_count).toBe(0);
     expect((await add(1).expect(200)).body).toMatchObject({ items: 20, hours: 1 });
     expect((await activityRow(app, id)).credit_count).toBe(1);
+  });
+
+  it('counts someone only while they have hours, through edits and removal (N2)', async () => {
+    await add(20).expect(200);
+    expect((await activityRow(app, id)).credit_count).toBe(1);
+    await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 0, reason: 'ขวดไม่สะอาด' }).expect(200);
+    expect((await activityRow(app, id)).credit_count).toBe(0);
+    await api(app, owner).delete(`/activities/${id}/credits/65000001`).expect(200);
+    expect((await activityRow(app, id)).credit_count).toBe(0);
   });
 
   it('stops at the activity hours', async () => {
@@ -627,7 +697,8 @@ describe('bottles', () => {
     await add(5).expect(200);
     await add(15).expect(200);
     const notices = await noticesOf(app, '65000001');
-    expect(notices.map((n) => n.title)).toEqual(['ได้รับ 1 ชั่วโมง', 'ชั่วโมงเปลี่ยนเป็น 2 ชั่วโมง']);
+    expect(notices.map((n) => n.title)).toEqual(['ได้รับ 1 ชั่วโมง', 'ได้รับรวม 2 ชั่วโมง']);
+    expect(notices[1].body).not.toContain('เหตุผล');
     expect(notices.every((n) => n.kind === 'credit')).toBe(true);
   });
 
@@ -708,7 +779,10 @@ describe('roster life cycle', () => {
     expect((await api(app, admin).post(`/activities/${id}/record`).expect(200)).body.changed).toBe(false);
     const recorded = (await noticesOf(app, '65000001')).filter((n) => n.kind === 'recorded');
     expect(recorded).toHaveLength(1);
-    expect(recorded[0]).toMatchObject({ title: 'บันทึกชั่วโมงลงระบบแล้ว', body: 'บริจาคโลหิต 4 ชั่วโมง', activity_id: id });
+    expect(recorded[0]).toMatchObject({ title: 'บันทึกชั่วโมงลงระบบแล้ว', body: 'บริจาคโลหิต\n4 ชั่วโมง', activity_id: id });
+    // A manual credit below full hours does not show the student its reason.
+    const first = (await noticesOf(app, '65000001')).find((n) => n.kind === 'credit');
+    expect(first).toMatchObject({ title: 'ได้รับ 4 ชั่วโมง', body: 'บริจาคโลหิต' });
     expect((await noticesOf(app, '65000002')).filter((n) => n.kind === 'recorded')).toHaveLength(0);
     await api(app, admin).patch(`/activities/${id}/credits/65000001`, { hours: 1, reason: 'x' }).expect(409);
   });
@@ -860,24 +934,52 @@ describe('Excel files', () => {
     await dbOf(app).query('UPDATE activities SET start_at = $2, end_at = $3 WHERE id = $1', [id, new Date(Date.UTC(2026, 10, 20, 1)), new Date(Date.UTC(2026, 10, 20, 8))]);
   });
 
-  it('the supervisor file has 11 columns in order, Thai intact, formulas stopped', async () => {
+  it('the supervisor file is a flat table with 11 columns in order, Thai intact, formulas stopped', async () => {
     const res = await download(api(app, owner).get(`/activities/${id}/export?kind=sup`).expect(200));
     expect(res.headers['content-type']).toContain('spreadsheetml');
-    expect(decodeURIComponent(res.headers['content-disposition'])).toContain('เก็บขยะริมน้ำ รายชื่อ.xlsx');
+    // What it is, the activity's day, then the title (R22).
+    expect(decodeURIComponent(res.headers['content-disposition'])).toContain("filename*=UTF-8''รายชื่อ 20-11-2569 เก็บขยะริมน้ำ.xlsx");
     const rows = await read(res.body);
     expect(rows[0]).toEqual(['ลำดับ', 'รหัสนิสิต', 'ชื่อ', 'กิจกรรม', 'หมวด', 'วันที่', 'ชั่วโมง', 'สถานะ', 'เวลายืนยัน', 'ยืนยันโดย', 'หมายเหตุ']);
     expect(rows).toHaveLength(4);
     const byId = Object.fromEntries(rows.slice(1).map((r) => [r[1], r]));
-    expect(byId['65000002'].slice(1, 8)).toEqual(['65000002', 'สมหญิง รักเรียน', 'เก็บขยะริมน้ำ', 'จัดสถานที่', '20 พ.ย. 2569', 3, 'ได้ชั่วโมง (ไม่ได้ลงทะเบียน)']);
+    expect(byId['65000002'].slice(1, 8)).toEqual(['65000002', 'สมหญิง รักเรียน', 'เก็บขยะริมน้ำ', 'จัดสถานที่', '20 พ.ย. 2569', 3, 'walk-in']);
+    // The activity repeats on every row.
+    expect(rows.slice(1).map((r) => r.slice(3, 6))).toEqual(Array(3).fill(['เก็บขยะริมน้ำ', 'จัดสถานที่', '20 พ.ย. 2569']));
+    // The confirm time always carries the full date.
     expect(byId['65000002'][8]).toMatch(/^\d{1,2} \S+ \d{4} \d{2}:\d{2} น\.$/);
     expect(byId['65000002'][9]).toBe('ผู้ดูแล ก');
     expect(byId['65000001'][2]).toBe("'=SUM(1)");
-    expect(byId['65000003'].slice(6, 8)).toEqual([0, 'ไม่มา']);
+    // The roster is still open: not scanned yet, no hours, not "ไม่มา" (R15).
+    expect(byId['65000003'][2]).toBe('ปวีณา มาสาย');
+    expect(byId['65000003'].slice(6, 8)).toEqual([undefined, 'ยังไม่สแกน']);
+    // Oldest hours first, as on the student's sheet, then who has none (R16).
+    expect(rows.slice(1).map((r) => r[1])).toEqual(['65000002', '65000001', '65000003']);
+
+    // The table header is row 1, stays in view and can be filtered.
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(res.body as any);
+    const ws = wb.worksheets[0];
+    expect(ws.getRow(1).getCell(1).value).toBe('ลำดับ');
+    expect(ws.views[0]).toMatchObject({ state: 'frozen', ySplit: 1 });
+    expect(ws.autoFilter).toBeTruthy();
+  });
+
+  it('after the roster closes, someone without hours is a no-show with 0 hours (R15)', async () => {
+    await dbOf(app).query('UPDATE activities SET closed_at = now() WHERE id = $1', [id]);
+    const rows = await read((await download(api(app, owner).get(`/activities/${id}/export?kind=sup`).expect(200))).body);
+    const noShow = rows.slice(1).find((r) => r[1] === '65000003')!;
+    expect(noShow.slice(6, 8)).toEqual([0, 'ไม่มา']);
   });
 
   it('the centre file has 7 columns, earners only, by id', async () => {
     const res = await download(api(app, admin).get(`/activities/${id}/export?kind=admin`).expect(200));
-    expect(decodeURIComponent(res.headers['content-disposition'])).toContain('บันทึกชั่วโมง.xlsx');
+    expect(decodeURIComponent(res.headers['content-disposition'])).toContain("filename*=UTF-8''บันทึกชั่วโมง 20-11-2569 เก็บขยะริมน้ำ.xlsx");
+    // A plain table, with its header kept in view and filters on (R22).
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(res.body as any);
+    expect(wb.worksheets[0].views[0]).toMatchObject({ state: 'frozen', ySplit: 1 });
+    expect(wb.worksheets[0].autoFilter).toBeTruthy();
     const rows = await read(res.body);
     expect(rows).toEqual([
       ['รหัสนิสิต', 'ชื่อ', 'กิจกรรม', 'หน่วยงาน', 'หมวด', 'วันที่', 'ชั่วโมง'],
