@@ -210,7 +210,7 @@ export class RosterService {
         dto.reason || null,
         user.supName,
       ]);
-      await hoursChangedNotice(c, activity, studentId, Number(current.hours), dto.hours);
+      await hoursChangedNotice(c, activity, studentId, Number(current.hours), dto.hours, dto.reason);
       return updated.rows[0];
     });
     this.realtime.notify([rooms.credits(activityId)]);
@@ -286,7 +286,7 @@ export class RosterService {
         await c.query(
           `INSERT INTO notices (student_id, kind, title, body, activity_id)
            SELECT s, 'recorded', 'บันทึกชั่วโมงลงระบบแล้ว', b, $3 FROM unnest($1::text[], $2::text[]) AS t(s, b)`,
-          [credits.map((r) => r.student_id), credits.map((r) => `${activity.title} ${fmtHours(Number(r.hours))} ชั่วโมง`), activityId],
+          [credits.map((r) => r.student_id), credits.map((r) => `${activity.title} · ${fmtHours(Number(r.hours))} ชั่วโมง`), activityId],
         );
       }
       return true;

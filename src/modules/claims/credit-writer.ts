@@ -21,14 +21,26 @@ export interface CreditInput {
 
 export type WriteResult = { ok: true; row: Row } | { ok: false; row: Row };
 
-export const creditNotice = (c: PoolClient, activity: Row, studentId: string, hours: number) =>
-  c.query(`INSERT INTO notices (student_id, kind, title, body, activity_id) VALUES ($1, 'credit', $2, $3, $4)`, [studentId, `ได้รับ ${fmtHours(hours)} ชั่วโมง`, activity.title, activity.id]);
+/** "<activity> · เหตุผล: <reason>", or the activity alone when the supervisor gave no reason. */
+const noticeBody = (activity: Row, reason?: string | null) => (reason ? `${activity.title} · เหตุผล: ${reason}` : activity.title);
 
-/** Tells the student when hours they already heard about change. The first hours above 0 read as "ได้รับ". */
-export async function hoursChangedNotice(c: PoolClient, activity: Row, studentId: string, oldHours: number, newHours: number) {
+export const creditNotice = (c: PoolClient, activity: Row, studentId: string, hours: number, reason?: string | null) =>
+  c.query(`INSERT INTO notices (student_id, kind, title, body, activity_id) VALUES ($1, 'credit', $2, $3, $4)`, [
+    studentId,
+    `ได้รับ ${fmtHours(hours)} ชั่วโมง`,
+    noticeBody(activity, reason),
+    activity.id,
+  ]);
+
+/**
+ * Tells the student when hours they already heard about change, with the supervisor's reason so a cut never comes
+ * unexplained. The first hours above 0 read as "ได้รับ"; more bottles read as a new total rather than an edit.
+ */
+export async function hoursChangedNotice(c: PoolClient, activity: Row, studentId: string, oldHours: number, newHours: number, reason?: string | null) {
   if (newHours === oldHours) return;
-  if (oldHours === 0) return creditNotice(c, activity, studentId, newHours);
-  await c.query(`INSERT INTO notices (student_id, kind, title, body, activity_id) VALUES ($1, 'credit', $2, $3, $4)`, [studentId, `ชั่วโมงเปลี่ยนเป็น ${fmtHours(newHours)} ชั่วโมง`, activity.title, activity.id]);
+  if (oldHours === 0) return creditNotice(c, activity, studentId, newHours, reason);
+  const title = activity.category_key === 'bottle' && newHours > oldHours ? `ได้รับรวม ${fmtHours(newHours)} ชม.` : `แก้ชั่วโมงเป็น ${fmtHours(newHours)} ชม.`;
+  await c.query(`INSERT INTO notices (student_id, kind, title, body, activity_id) VALUES ($1, 'credit', $2, $3, $4)`, [studentId, title, noticeBody(activity, reason), activity.id]);
 }
 
 /**
@@ -87,6 +99,6 @@ export async function writeCredit(c: PoolClient, activity: Row, input: CreditInp
     );
   }
 
-  if (input.hours > 0) await creditNotice(c, activity, input.studentId, input.hours);
+  if (input.hours > 0) await creditNotice(c, activity, input.studentId, input.hours, input.reason);
   return { ok: true, row };
 }
