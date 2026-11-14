@@ -29,7 +29,7 @@
 ### Handoff (สถานะเมื่อ 14 พ.ย. 2569)
 
 **ตอนนี้ระบบจริงเป็นอย่างไร**
-- server รันจาก folder นี้ branch `fix/report-2026-11-12` (commit `0db8a95`) ด้วย `node dist/main.js` แบบแยกจาก terminal log อยู่ที่ `logs/server.log`
+- server รันจาก folder นี้ โค้ดของ commit `0db8a95` (merge เข้า `main` แล้ว) ด้วย `node dist/main.js` แบบแยกจาก terminal log อยู่ที่ `logs/server.log`
 - ฐานข้อมูลคือ embedded PostgreSQL ใน `.dev-db/` port 54330 ที่เจ้าของโปรเจกต์เปิดด้วย `npm run db:dev` และ `cloudflared tunnel run nuvol` ยังรันใน terminal ของเจ้าของโปรเจกต์
 - ข้อมูล: 0 กิจกรรม, หน่วยงานทดสอบ 3 รายการ (`DEV-ORG`, `DEV-ORG-2`, `DEV-ADMIN`), นิสิตทดสอบ 12 คน
 - เว็บ: Cloudflare Pages project `nuvol-volunteer-web` deployment `635cd8d6`
@@ -37,7 +37,7 @@
 **ที่ยังเหลือ เรียงตามความเร่ง (วันงาน 20 พ.ย. 2569)**
 1. ทดสอบบนมือถือจริงตามรายการ 8 ข้อใน `REPORT-2026-11-13.md`
 2. เพิ่มหน่วยงานจริงในตาราง `orgs` และตัดสินใจเรื่องหน่วยงานกับนิสิตทดสอบ
-3. merge `fix/report-2026-11-12` เข้า `main` ทั้งสอง repo (branch push แล้วเมื่อ 14 พ.ย. 2569 การ merge รอเจ้าของโปรเจกต์สั่ง)
+3. เทียบกับ branch อื่นบน GitHub ที่แก้เรื่องเดียวกัน: `fix/b3-excel-walkin-label` (server), `fix/b2-b3-b4-b7` และ `fix/f-n-b5-pending` (web) ผู้เขียนชื่อ Mark ลงวันที่ 13 ถึง 14 พ.ย. 2569 ยังไม่ได้รวมเข้า `main` (`fix/report-2026-11-12` merge เข้า `main` แล้วเมื่อ 14 พ.ย. 2569)
 4. ทำให้ server เป็น service ที่เริ่มเองเมื่อเครื่อง restart (`DEPLOY-CLOUDFLARE-TODO.md` ขั้นที่ 5)
 5. เรื่องที่เปิดไว้ในรายงาน: server ยังรับ claim หลัง "ปิดกิจกรรม" จนกว่าจะ "ส่งรายชื่อ", ข้อความบนจอ QR หลังปิด, `/favicon.ico`, `npm audit` ของเว็บ
 
