@@ -16,6 +16,8 @@ export class ApiError extends HttpException {
 export const notFound = (what = 'ไม่พบข้อมูล') => new ApiError(404, 'NOT_FOUND', what);
 export const forbidden = (why = 'ไม่มีสิทธิ์') => new ApiError(403, 'FORBIDDEN', why);
 export const rosterLocked = () => new ApiError(409, 'ROSTER_LOCKED', 'รายชื่อถูกส่งหรือบันทึกแล้ว แก้ไขไม่ได้');
+/** The supervisor closed the roster: no more scans, though they can still add people by hand until it is sent. */
+export const rosterClosed = () => new ApiError(409, 'ROSTER_CLOSED', 'ผู้ดูแลปิดรายชื่อแล้ว รับชั่วโมงไม่ได้ แจ้งรหัสนิสิตกับผู้ดูแลกิจกรรม');
 export const validation = (fields: string[], message = 'ข้อมูลไม่ถูกต้อง') => new ApiError(400, 'VALIDATION', message, fields);
 
 const CODE_BY_STATUS: Record<number, string> = {

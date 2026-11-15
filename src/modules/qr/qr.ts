@@ -3,8 +3,9 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { assertOwner, CurrentUser, Roles, SupUser } from '../../common/auth';
 import { AppConfig } from '../../common/config';
 import { DbService, Row } from '../../common/db.service';
-import { notFound, rosterLocked } from '../../common/errors';
+import { notFound, rosterClosed, rosterLocked } from '../../common/errors';
 import { Num } from '../../common/fields';
+import { isRosterClosed } from '../claims/rules';
 import { makeDynamicToken, makeStaticToken, QR_INTERVAL_DEFAULT, QR_PREFETCH_S, QrCoords, windowOf } from './qr-token';
 
 export class QrRequestDto {
@@ -34,14 +35,16 @@ export class QrService {
   ) {}
 
   /**
-   * Signs a token for the QR screen. Coordinates go into the token only if this activity checks location. A dynamic
+   * Signs a token for the QR screen, until the roster is closed or sent. Coordinates go into the token only if this activity checks location. A dynamic
    * screen also gets the tokens of the next QR_PREFETCH_S seconds, each valid only once its own window comes.
    */
   async issue(user: SupUser, activityId: string, dto: QrRequestDto) {
-    const activity = await this.db.one('SELECT id, org_code, qr_mode, loc_mode, qr_interval, lat, lng, submitted_at FROM activities WHERE id = $1', [activityId]);
+    const activity = await this.db.one('SELECT id, org_code, qr_mode, loc_mode, qr_interval, lat, lng, end_at, closed_at, submitted_at FROM activities WHERE id = $1', [activityId]);
     if (!activity) throw notFound('ไม่พบกิจกรรม');
     assertOwner(user, activity);
     if (activity.submitted_at) throw rosterLocked();
+    // A QR for a closed roster would only fail for every student who scans it.
+    if (isRosterClosed(activity as { closed_at: Date | null; end_at: Date }, Date.now())) throw rosterClosed();
 
     const coords = activity.loc_mode === 'off' ? {} : pickCoords(activity, dto);
     const now = Date.now();
