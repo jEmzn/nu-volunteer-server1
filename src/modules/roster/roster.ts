@@ -9,7 +9,7 @@ import { Bool, Int, Name, Str } from '../../common/fields';
 import { fmtHours } from '../../common/format';
 import { toCredit, toCreditForPeer, toOwnCredit, toRegistration } from '../../common/mappers';
 import { hoursChangedNotice, writeCredit } from '../claims/credit-writer';
-import { bottleHours } from '../claims/rules';
+import { bottleHours, personHoursCap } from '../claims/rules';
 import { RealtimeService, rooms } from '../realtime/realtime';
 import { countStrikes, listStrikes, STRIKE_LIMIT } from './strikes';
 
@@ -30,7 +30,7 @@ export class AddCreditDto {
   @Str({ matches: STUDENT_ID }) studentId: string;
   /** Needed only if this student is not in the system yet. A known id keeps the stored name. */
   @Name({ optional: true, allowEmpty: true }) name?: string | null;
-  /** 0 up to the activity's hours. Missing means full hours. */
+  /** 0 up to personHoursCap. Missing means full hours. */
   @Int({ optional: true, min: 0, max: 99 }) hours?: number | null;
   /** Required when the hours are below full. */
   @Str({ optional: true, max: 500 }) reason?: string | null;
@@ -57,6 +57,7 @@ export class AddBottlesDto {
 }
 
 const NO_ACTIVITY = 'ไม่พบกิจกรรม';
+const overCap = (cap: number) => validation(['hours'], `ให้ได้ไม่เกิน ${fmtHours(cap)} ชั่วโมง`);
 
 @Injectable()
 export class RosterService {
@@ -187,7 +188,7 @@ export class RosterService {
       assertCanEdit(user, activity);
       const full = Number(activity.hours);
       const hours = dto.hours ?? full;
-      if (hours > full) throw validation(['hours'], 'ชั่วโมงเกินของกิจกรรม');
+      if (hours > personHoursCap(activity as { hours: number; category_key: string })) throw overCap(personHoursCap(activity as { hours: number; category_key: string }));
       if (hours < full && !dto.reason) throw validation(['reason'], 'ต้องระบุเหตุผล');
       const name = await this.ensureStudent(c, dto.studentId, dto.name);
       return writeCredit(c, activity, { studentId: dto.studentId, name, hours, method: 'manual', at: Date.now(), editedBy: user.supName, reason: dto.reason || undefined, reasonShared: !!dto.shareReason });
@@ -202,17 +203,20 @@ export class RosterService {
       const activity = await lockActivity(c, activityId);
       if (!activity) throw notFound(NO_ACTIVITY);
       assertCanEdit(user, activity);
-      const current = (await c.query('SELECT hours, full_hours FROM credits WHERE activity_id = $1 AND student_id = $2', [activityId, studentId])).rows[0];
+      const current = (await c.query('SELECT hours FROM credits WHERE activity_id = $1 AND student_id = $2', [activityId, studentId])).rows[0];
       if (!current) throw notFound('ไม่พบชั่วโมง');
-      const full = Number(current.full_hours);
-      if (dto.hours > full) throw validation(['hours'], 'ชั่วโมงเกินของกิจกรรม');
-      // The screen sends no reason when giving back full hours; anything less must say why.
+      // Full is what the activity gives now, the same number the screen shows. The copy on the credit can be older.
+      const full = Number(activity.hours);
+      // Hours already above the limit (a bottle exchange whose rule changed) can be saved again, never raised further.
+      const cap = Math.max(personHoursCap(activity as { hours: number; category_key: string }), Number(current.hours));
+      if (dto.hours > cap) throw overCap(cap);
+      // The screen sends no reason when giving full hours or more; anything less must say why.
       if (dto.hours < full && !dto.reason) throw validation(['reason'], 'ต้องระบุเหตุผล');
       const reason = dto.reason || null;
       const shared = !!reason && !!dto.shareReason;
       const updated = await c.query(
-        `UPDATE credits SET hours = $3, reason = $4, reason_shared = $6, edited_by = $5, edited_at = now() WHERE activity_id = $1 AND student_id = $2 RETURNING *`,
-        [activityId, studentId, dto.hours, reason, user.supName, shared],
+        `UPDATE credits SET hours = $3, full_hours = $7, reason = $4, reason_shared = $6, edited_by = $5, edited_at = now() WHERE activity_id = $1 AND student_id = $2 RETURNING *`,
+        [activityId, studentId, dto.hours, reason, user.supName, shared, full],
       );
       // A bottle exchange counts only people with hours, so crossing 0 either way moves the count.
       if (activity.category_key === 'bottle' && Number(current.hours) > 0 !== dto.hours > 0)

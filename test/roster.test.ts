@@ -475,13 +475,17 @@ describe('adding someone by hand', () => {
     });
   });
 
-  it('takes hours from 0 up to the activity hours, and 0 sends no notice', async () => {
+  it('takes hours from 0 up to 99, whatever the activity hours, and 0 sends no notice', async () => {
     const owner = await sup(app);
     const id = await newActivity(app, owner);
     expect((await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000001', name: 'ก', hours: 0, reason: 'กลับก่อน' }).expect(200)).body.credit.hours).toBe(0);
     expect(await noticesOf(app, '65000001')).toHaveLength(0);
     expect((await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000002', name: 'ข', hours: 4, reason: 'กลับก่อน' }).expect(200)).body.credit).toMatchObject({ hours: 4, fullHours: 6 });
-    await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000003', name: 'ค', hours: 7 }).expect(400);
+    // Work on site can run longer than planned (VB-25): the supervisor decides, with no reason needed for more.
+    expect((await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000003', name: 'ค', hours: 13 }).expect(200)).body.credit).toMatchObject({ hours: 13, fullHours: 6 });
+    expect((await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000004', name: 'ง', hours: 99 }).expect(200)).body.credit).toMatchObject({ hours: 99, fullHours: 6 });
+    const res = await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000005', name: 'จ', hours: 100 }).expect(400);
+    expect(res.body.error.fields).toEqual(['hours']);
   });
 
   it('answers already for someone with hours', async () => {
@@ -520,8 +524,21 @@ describe('editing hours', () => {
     expect(res).not.toHaveProperty('reason');
   });
 
-  it('cannot go above full hours', async () => {
-    await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 7, reason: 'x' }).expect(400);
+  it('can go above the activity hours with no reason, up to 99 (VB-25)', async () => {
+    expect((await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 8 }).expect(200)).body).toMatchObject({ hours: 8, fullHours: 6 });
+    expect((await noticesOf(app, '65000001')).map((n) => n.title)).toEqual(['ได้รับ 6 ชั่วโมง', 'แก้ชั่วโมงเป็น 8 ชั่วโมง']);
+    await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 13 }).expect(200);
+    await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 99 }).expect(200);
+    const res = await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 100, reason: 'x' }).expect(400);
+    expect(res.body.error.fields).toEqual(['hours']);
+  });
+
+  it('measures against the activity hours as they are now, not as they were when the credit was written (VB-25)', async () => {
+    await api(app, owner).patch(`/activities/${id}`, { hours: 8 }).expect(200);
+    // 6 was full when it was given; now it is below full and needs a reason like any other cut.
+    expect((await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 6 }).expect(400)).body.error.fields).toEqual(['reason']);
+    expect((await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 8 }).expect(200)).body).toMatchObject({ hours: 8, fullHours: 8 });
+    await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 17 }).expect(200);
   });
 
   it('answers 404 for someone without hours', async () => {
@@ -688,6 +705,12 @@ describe('bottles', () => {
 
   it('stops at the activity hours', async () => {
     expect((await add(1000).expect(200)).body).toMatchObject({ items: 1000, hours: 3 });
+  });
+
+  it('keeps the limit per person when hours are edited by hand (VB-25)', async () => {
+    await add(40).expect(200);
+    await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 3 }).expect(200);
+    expect((await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 4 }).expect(400)).body.error.message).toBe('ให้ได้ไม่เกิน 3 ชั่วโมง');
   });
 
   it('tells the student when the hours first go above 0, and again each time they change', async () => {

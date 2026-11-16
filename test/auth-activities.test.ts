@@ -1,5 +1,7 @@
 import { NestExpressApplication } from '@nestjs/platform-express';
-import { api, activityBody, activityRow, DAY, dbOf, http, newActivity, ORG_A, ORG_ADMIN, ORG_B, resetDb, startApp, student, sup } from './helpers';
+import { DbService } from '../src/common/db.service';
+import { REQUIRED_COLUMNS, SchemaCheck } from '../src/common/schema-check';
+import { api, activityBody, activityRow, creditRow, DAY, dbOf, http, newActivity, noticesOf, ORG_A, ORG_ADMIN, ORG_B, resetDb, startApp, student, sup } from './helpers';
 
 let app: NestExpressApplication;
 beforeAll(async () => {
@@ -73,6 +75,34 @@ describe('supervisor sign-in', () => {
 describe('the API as a whole', () => {
   it('reports health, checking the database', async () => {
     expect((await http(app).get('/health').expect(200)).body).toEqual({ status: 'ok', db: 'ok' });
+  });
+
+  describe('when the database is behind the code (VD-08)', () => {
+    const db = () => app.get(DbService);
+    afterEach(() => db().query('ALTER TABLE credits ADD COLUMN IF NOT EXISTS reason_shared boolean not null default false'));
+
+    it('health is not ok while a column the code writes is missing, and ok again once it is added', async () => {
+      await db().query('ALTER TABLE credits DROP COLUMN reason_shared');
+      const res = await http(app).get('/health').expect(503);
+      expect(res.body.error).toMatchObject({ code: 'SCHEMA_OUTDATED', message: expect.stringContaining('credits.reason_shared') });
+      await db().query('ALTER TABLE credits ADD COLUMN reason_shared boolean not null default false');
+      expect((await http(app).get('/health').expect(200)).body).toEqual({ status: 'ok', db: 'ok' });
+    });
+
+    it('names each missing column', async () => {
+      await db().query('ALTER TABLE credits DROP COLUMN reason_shared');
+      expect(await app.get(SchemaCheck).missing()).toEqual(['credits.reason_shared']);
+      await db().query('ALTER TABLE credits ADD COLUMN reason_shared boolean not null default false');
+      expect(await app.get(SchemaCheck).missing()).toEqual([]);
+    });
+
+    it('checks exactly the columns db/schema.sql creates, so a new column cannot be forgotten', async () => {
+      const { rows } = await db().query(`SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = current_schema() ORDER BY table_name, column_name`);
+      const actual: Record<string, string[]> = {};
+      for (const r of rows) (actual[r.table_name] ??= []).push(r.column_name);
+      const listed = Object.fromEntries(Object.entries(REQUIRED_COLUMNS).map(([t, cols]) => [t, [...cols].sort()]));
+      expect(listed).toEqual(actual);
+    });
   });
 
   it('gives the server time', async () => {
@@ -293,6 +323,101 @@ describe('editing an activity', () => {
     expect((await api(app, await sup(app, ORG_B)).patch(`/activities/${id}`, { title: 'x' }).expect(403)).body.error.code).toBe('FORBIDDEN');
     await api(app, await student(app)).patch(`/activities/${id}`, { title: 'x' }).expect(403);
     await api(app, await sup(app, ORG_ADMIN)).patch(`/activities/${id}`, { title: 'โดยศูนย์' }).expect(200);
+  });
+
+  describe('changing the hours once people have them (VB-25)', () => {
+    const give = (studentId: string, body: object = {}) => api(app, owner).post(`/activities/${id}/credits`, { studentId, name: `นิสิต ${studentId}`, ...body }).expect(200);
+    const hoursOf = async (studentId: string) => Number((await creditRow(app, id, studentId)).hours);
+
+    it('refuses fewer hours while someone has hours, and says to lower them per person', async () => {
+      await give('65000001');
+      const res = await api(app, owner).patch(`/activities/${id}`, { hours: 4, title: 'ชื่อใหม่' }).expect(409);
+      expect(res.body.error).toMatchObject({ code: 'HOURS_IN_USE', fields: ['hours'], message: expect.stringContaining('รายคน') });
+      expect(await activityRow(app, id)).toMatchObject({ hours: 6, title: 'บริจาคโลหิต' });
+      expect(await hoursOf('65000001')).toBe(6);
+    });
+
+    it('takes fewer hours while nobody has any, and the same hours at any time', async () => {
+      await give('65000001', { hours: 0, reason: 'กลับก่อน' });
+      expect((await api(app, owner).patch(`/activities/${id}`, { hours: 4 }).expect(200)).body.hours).toBe(4);
+      expect(await creditRow(app, id, '65000001')).toMatchObject({ hours: 0, full_hours: 4 });
+      await give('65000002');
+      await api(app, owner).patch(`/activities/${id}`, { hours: 4, title: 'ชื่อใหม่' }).expect(200);
+    });
+
+    it('raising alone leaves everyone as they were, measured against the new hours', async () => {
+      await give('65000001');
+      const res = (await api(app, owner).patch(`/activities/${id}`, { hours: 8 }).expect(200)).body;
+      expect(res.hours).toBe(8);
+      expect(res).not.toHaveProperty('raised');
+      expect(await creditRow(app, id, '65000001')).toMatchObject({ hours: 6, full_hours: 8, edited_at: null });
+      expect((await noticesOf(app, '65000001')).map((n) => n.title)).toEqual(['ได้รับ 6 ชั่วโมง']);
+    });
+
+    it('raising with raiseCredited lifts those at full hours, tells them, and leaves hand-set hours alone', async () => {
+      await give('65000001');
+      await give('65000002');
+      await give('65000003', { hours: 3, reason: 'กลับก่อน' });
+      await give('65000004', { hours: 7 });
+      await give('65000005', { hours: 0, reason: 'ไม่ได้ทำงาน' });
+      const res = (await api(app, owner).patch(`/activities/${id}`, { hours: 8, raiseCredited: true }).expect(200)).body;
+      expect(res).toMatchObject({ hours: 8, raised: 2 });
+      expect(await creditRow(app, id, '65000001')).toMatchObject({ hours: 8, full_hours: 8, edited_by: 'ผู้ดูแล ก' });
+      expect((await creditRow(app, id, '65000001')).edited_at).not.toBeNull();
+      expect(await hoursOf('65000002')).toBe(8);
+      expect(await creditRow(app, id, '65000003')).toMatchObject({ hours: 3, full_hours: 8, reason: 'กลับก่อน' });
+      expect(await hoursOf('65000004')).toBe(7);
+      expect(await hoursOf('65000005')).toBe(0);
+      expect((await noticesOf(app, '65000001')).map((n) => n.title)).toEqual(['ได้รับ 6 ชั่วโมง', 'แก้ชั่วโมงเป็น 8 ชั่วโมง']);
+      expect(await noticesOf(app, '65000003')).toHaveLength(1);
+      expect(await noticesOf(app, '65000005')).toHaveLength(0);
+      expect((await activityRow(app, id)).credit_count).toBe(5);
+    });
+
+    it('raiseCredited does nothing unless the hours go up', async () => {
+      await give('65000001');
+      const res = (await api(app, owner).patch(`/activities/${id}`, { title: 'ชื่อใหม่', raiseCredited: true }).expect(200)).body;
+      expect(res.raised).toBe(0);
+      expect(await creditRow(app, id, '65000001')).toMatchObject({ hours: 6, edited_at: null });
+    });
+
+    describe('in a bottle exchange', () => {
+      const bottles = (studentId: string, add: number) => api(app, owner).post(`/activities/${id}/bottles`, { studentId, name: `นิสิต ${studentId}`, add }).expect(200);
+      beforeEach(async () => {
+        id = await newActivity(app, owner, { categoryKey: 'bottle', itemsPerHour: 20, hours: 3, qrMode: 'static', locMode: 'off' });
+      });
+
+      it('refuses more bottles per hour or a lower limit while someone has hours', async () => {
+        await bottles('65000001', 40);
+        expect((await api(app, owner).patch(`/activities/${id}`, { itemsPerHour: 30 }).expect(409)).body.error).toMatchObject({ code: 'HOURS_IN_USE', fields: ['itemsPerHour'] });
+        expect((await api(app, owner).patch(`/activities/${id}`, { hours: 2 }).expect(409)).body.error).toMatchObject({ code: 'HOURS_IN_USE', fields: ['hours'] });
+        expect(await activityRow(app, id)).toMatchObject({ items_per_hour: 20, hours: 3 });
+      });
+
+      it('takes either while everyone is still below one hour', async () => {
+        await bottles('65000001', 19);
+        await api(app, owner).patch(`/activities/${id}`, { itemsPerHour: 30, hours: 2 }).expect(200);
+      });
+
+      it('with raiseCredited works the hours out again from the bottles, and leaves hand-set hours alone', async () => {
+        await bottles('65000001', 45);
+        await bottles('65000002', 15);
+        await bottles('65000003', 100);
+        await bottles('65000004', 40);
+        await api(app, owner).patch(`/activities/${id}/credits/65000004`, { hours: 1, reason: 'ขวดไม่สะอาด' }).expect(200);
+        expect((await activityRow(app, id)).credit_count).toBe(3);
+        const res = (await api(app, owner).patch(`/activities/${id}`, { itemsPerHour: 10, hours: 5, raiseCredited: true }).expect(200)).body;
+        expect(res.raised).toBe(3);
+        expect(await creditRow(app, id, '65000001')).toMatchObject({ hours: 4, items: 45, full_hours: 5 });
+        expect(await hoursOf('65000002')).toBe(1);
+        expect(await hoursOf('65000003')).toBe(5);
+        expect(await hoursOf('65000004')).toBe(1);
+        // Someone who just reached their first hour now counts (N2), and hears "ได้รับ", not "แก้".
+        expect((await activityRow(app, id)).credit_count).toBe(4);
+        expect((await noticesOf(app, '65000002')).map((n) => n.title)).toEqual(['ได้รับ 1 ชั่วโมง']);
+        expect((await noticesOf(app, '65000001')).map((n) => n.title)).toEqual(['ได้รับ 2 ชั่วโมง', 'ได้รับรวม 4 ชั่วโมง']);
+      });
+    });
   });
 
   it('locks the owner after sending and the admin after recording', async () => {

@@ -10,6 +10,7 @@ import { AuthGuard } from './common/auth';
 import { AppConfig } from './common/config';
 import { RateLimitGuard, WRITE_LIMIT } from './common/rate-limit';
 import { DbService } from './common/db.service';
+import { SchemaCheck } from './common/schema-check';
 import { ActivitiesModule } from './modules/activities/activities';
 import { AuthModule } from './modules/auth/auth';
 import { ChatModule } from './modules/chat/chat';
@@ -34,8 +35,8 @@ const throttler = ThrottlerModule.forRoot({ throttlers: [WRITE_LIMIT], errorMess
 @Global()
 @Module({
   imports: [jwt, throttler],
-  providers: [AppConfig, DbService],
-  exports: [AppConfig, DbService, jwt, throttler],
+  providers: [AppConfig, DbService, SchemaCheck],
+  exports: [AppConfig, DbService, SchemaCheck, jwt, throttler],
 })
 export class CoreModule {}
 

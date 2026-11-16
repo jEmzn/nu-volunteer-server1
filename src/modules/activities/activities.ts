@@ -2,12 +2,14 @@ import { Body, Controller, Get, Injectable, Module, Param, Patch, Post, Res } fr
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { assertCanEdit, CurrentUser, Public, Roles, SupUser, Viewer } from '../../common/auth';
-import { DbService, lockActivity } from '../../common/db.service';
-import { notFound, validation } from '../../common/errors';
+import type { PoolClient } from 'pg';
+import { DbService, lockActivity, Row } from '../../common/db.service';
+import { ApiError, notFound, validation } from '../../common/errors';
 import { assertNotNull, assertRequired, Bool, Int, MAX_TIME_MS, Name, Nested, Num, OneOf, Str } from '../../common/fields';
-import { newId } from '../../common/format';
+import { fmtHours, newId } from '../../common/format';
 import { toActivity } from '../../common/mappers';
 import { assertPoster, POSTER_CACHE, POSTER_COLUMN, posterImage } from '../../common/poster';
+import { HoursRule, lowersHours, raisedHours } from '../claims/rules';
 import { RealtimeService, rooms } from '../realtime/realtime';
 
 export class SupervisorDto {
@@ -43,6 +45,8 @@ export class ActivityDto {
   @Bool({ optional: true }) hidden?: boolean | null;
   @Bool({ optional: true }) hideUntilOpen?: boolean | null;
   @Str({ optional: true, max: 100 }) templateId?: string | null;
+  /** PATCH only, with more hours: also lift everyone who has exactly what the old rule gave. Hours set by hand stay. */
+  @Bool({ optional: true }) raiseCredited?: boolean;
 }
 
 const REQUIRED = ['title', 'categoryKey', 'start', 'end', 'hours', 'capLimit', 'capacity', 'walkIn', 'qrMode', 'locMode', 'radius', 'qrInterval', 'supervisor', 'chatEnabled'] as const;
@@ -84,6 +88,11 @@ const COLUMNS: Record<string, (v: any) => Record<string, unknown>> = {
   hidden: (v) => ({ hidden: v }),
   hideUntilOpen: (v) => ({ hide_until_open: v }),
   templateId: (v) => ({ template_id: v }),
+};
+
+const LOWER_MESSAGE: Record<'hours' | 'itemsPerHour', string> = {
+  hours: 'มีคนได้รับชั่วโมงแล้ว ลดชั่วโมงของกิจกรรมไม่ได้ ถ้าต้องการลดให้แก้ชั่วโมงรายคนในรายชื่อ',
+  itemsPerHour: 'มีคนได้รับชั่วโมงแล้ว เพิ่มจำนวนขวดต่อชั่วโมงไม่ได้ ถ้าต้องการลดให้แก้ชั่วโมงรายคนในรายชื่อ',
 };
 
 function columnsOf(dto: ActivityDto): Record<string, unknown> {
@@ -135,7 +144,7 @@ export class ActivitiesService {
     assertNotNull(dto as Record<string, unknown>, NOT_CLEARABLE);
     if (dto.poster) assertPoster(dto.poster);
     const cols = columnsOf(dto);
-    await this.db.tx(async (c) => {
+    const raised = await this.db.tx(async (c) => {
       const activity = await lockActivity(c, id);
       if (!activity) throw notFound('ไม่พบกิจกรรม');
       assertCanEdit(user, activity);
@@ -143,11 +152,53 @@ export class ActivitiesService {
       const end = dto.end ?? activity.end_at.getTime();
       if (end <= start) throw validation(['end'], 'เวลาสิ้นสุดต้องหลังเวลาเริ่ม');
       const names = Object.keys(cols);
-      if (!names.length) return;
+      if (!names.length) return 0;
+
+      const before: HoursRule = { category_key: activity.category_key, hours: activity.hours, items_per_hour: activity.items_per_hour };
+      const after: HoursRule = {
+        category_key: dto.categoryKey ?? before.category_key,
+        hours: dto.hours ?? before.hours,
+        items_per_hour: dto.itemsPerHour === undefined ? before.items_per_hour : dto.itemsPerHour,
+      };
+      // Hours people already hold are a promise to them. Giving less is a decision about each person, made in the roster.
+      const lowered = lowersHours(before, after);
+      if (lowered && (await c.query('SELECT 1 FROM credits WHERE activity_id = $1 AND hours > 0 LIMIT 1', [id])).rowCount) throw new ApiError(409, 'HOURS_IN_USE', LOWER_MESSAGE[lowered], [lowered]);
+
       await c.query(`UPDATE activities SET ${names.map((n, i) => `${n} = $${i + 2}`).join(', ')} WHERE id = $1`, [id, ...Object.values(cols)]);
+      // Every credit is measured against the activity's hours as they are now.
+      if (Number(after.hours) !== Number(before.hours)) await c.query('UPDATE credits SET full_hours = $2 WHERE activity_id = $1', [id, after.hours]);
+      return dto.raiseCredited ? this.raiseCredited(c, { ...activity, title: dto.title ?? activity.title }, before, after, user.supName) : 0;
     });
-    this.realtime.notify([...rooms.afterActivity(id), rooms.catalog]);
-    return this.get(user, id);
+    this.realtime.notify([...rooms.afterActivity(id), rooms.catalog, ...(raised ? [rooms.credits(id)] : [])]);
+    const activity = await this.get(user, id);
+    return dto.raiseCredited === undefined ? activity : { ...activity, raised };
+  }
+
+  /** Lifts everyone still at what the old rule gave to what the new one gives, and tells them. Answers how many. */
+  private async raiseCredited(c: PoolClient, activity: Row, before: HoursRule, after: HoursRule, by: string): Promise<number> {
+    const credits = (await c.query('SELECT student_id, hours, items FROM credits WHERE activity_id = $1', [activity.id])).rows;
+    const moved = credits.flatMap((r) => {
+      const hours = raisedHours(r as { hours: number; items: number | null }, before, after);
+      return hours === null ? [] : [{ studentId: r.student_id as string, from: Number(r.hours), hours }];
+    });
+    if (!moved.length) return 0;
+    await c.query(
+      `UPDATE credits SET hours = t.h, edited_by = $4, edited_at = now()
+       FROM unnest($2::text[], $3::float8[]) AS t(s, h) WHERE activity_id = $1 AND student_id = t.s`,
+      [activity.id, moved.map((m) => m.studentId), moved.map((m) => m.hours), by],
+    );
+    const bottle = after.category_key === 'bottle';
+    // A bottle exchange counts only people with hours (N2), so the ones who just reached their first hour now count.
+    const firstHour = moved.filter((m) => m.from === 0).length;
+    if (bottle && firstHour) await c.query('UPDATE activities SET credit_count = credit_count + $2 WHERE id = $1', [activity.id, firstHour]);
+    // Same wording as hoursChangedNotice, written in one statement because this can be a few hundred people.
+    const title = (m: { from: number; hours: number }) => (m.from === 0 ? `ได้รับ ${fmtHours(m.hours)} ชั่วโมง` : bottle ? `ได้รับรวม ${fmtHours(m.hours)} ชั่วโมง` : `แก้ชั่วโมงเป็น ${fmtHours(m.hours)} ชั่วโมง`);
+    await c.query(
+      `INSERT INTO notices (student_id, kind, title, body, activity_id)
+       SELECT s, 'credit', t, $3, $4 FROM unnest($1::text[], $2::text[]) AS x(s, t)`,
+      [moved.map((m) => m.studentId), moved.map(title), activity.title, activity.id],
+    );
+    return moved.length;
   }
 }
 
@@ -187,7 +238,7 @@ export class ActivitiesController {
 
   @Patch(':id')
   @Roles('sup')
-  @ApiOperation({ summary: 'แก้กิจกรรม ตั้งค่าเช็คชื่อ หรือซ่อน/แสดง (hidden); null คือล้างค่า; owner จนกว่าจะส่ง admin จนกว่าจะบันทึก' })
+  @ApiOperation({ summary: 'แก้กิจกรรม ตั้งค่าเช็คชื่อ หรือซ่อน/แสดง (hidden); null คือล้างค่า; owner จนกว่าจะส่ง admin จนกว่าจะบันทึก; ลดชั่วโมงหลังมีคนได้ชั่วโมงได้ 409 HOURS_IN_USE' })
   update(@CurrentUser() user: SupUser, @Param('id') id: string, @Body() dto: ActivityDto) {
     return this.activities.update(user, id, dto);
   }

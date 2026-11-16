@@ -446,6 +446,84 @@ describe('writing the credit', () => {
     });
   });
 
+  describe('after the roster was closed but not sent (VB-06)', () => {
+    it('gives no more QR', async () => {
+      const id = await newActivity(app, owner);
+      await api(app, owner).post(`/activities/${id}/close`).expect(200);
+      const res = await api(app, owner).post(`/activities/${id}/qr`, { la: LAT, lo: LNG, ac: 10 }).expect(409);
+      expect(res.body.error.code).toBe('ROSTER_CLOSED');
+    });
+
+    it('refuses a scan of a QR shown before closing, with a message for the student, and writes nothing', async () => {
+      const s = await student(app);
+      const id = await newActivity(app, owner);
+      const { token } = await qr(owner, id);
+      await api(app, owner).post(`/activities/${id}/close`).expect(200);
+      const res = await api(app, s).post('/claims', { token, ...at }).expect(409);
+      expect(res.body.error).toMatchObject({ code: 'ROSTER_CLOSED', message: expect.stringContaining('ปิดรายชื่อแล้ว') });
+      expect(await creditRow(app, id, '65000001')).toBeUndefined();
+      expect(await regRow(app, id, '65000001')).toBeUndefined();
+      expect((await activityRow(app, id)).credit_count).toBe(0);
+      expect(await noticesOf(app, '65000001')).toHaveLength(0);
+    });
+
+    it('takes a scan kept offline from before closing, at the time it was scanned', async () => {
+      const s = await student(app);
+      const id = await newActivity(app, owner);
+      const { token } = await qr(owner, id);
+      const scannedAt = Date.now();
+      await api(app, owner).post(`/activities/${id}/close`).expect(200);
+      expect((await api(app, s).post('/claims', { token, ...at, scannedAt, offline: true }).expect(200)).body.ok).toBe(true);
+      const row = await creditRow(app, id, '65000001');
+      expect(row.at.getTime()).toBe(scannedAt);
+      expect(row.flags).toContain('offline');
+    });
+
+    it('refuses a scan kept offline from after closing', async () => {
+      const s = await student(app);
+      const id = await newActivity(app, owner);
+      const { token } = await qr(owner, id);
+      await dbOf(app).query(`UPDATE activities SET closed_at = now() - interval '5 seconds' WHERE id = $1`, [id]);
+      const scannedAt = Date.now();
+      expect((await api(app, s).post('/claims', { token, ...at, scannedAt, offline: true }).expect(409)).body.error.code).toBe('ROSTER_CLOSED');
+      expect(await creditRow(app, id, '65000001')).toBeUndefined();
+    });
+
+    it('refuses a scan from before closing once the roster is sent', async () => {
+      const s = await student(app);
+      const id = await newActivity(app, owner);
+      const { token } = await qr(owner, id);
+      const scannedAt = Date.now();
+      await api(app, owner).post(`/activities/${id}/close`).expect(200);
+      await api(app, owner).post(`/activities/${id}/submit`).expect(200);
+      expect((await api(app, s).post('/claims', { token, ...at, scannedAt, offline: true }).expect(409)).body.error.code).toBe('ROSTER_LOCKED');
+      expect(await creditRow(app, id, '65000001')).toBeUndefined();
+    });
+
+    it('still answers already to someone who has the hours', async () => {
+      const s = await student(app);
+      const id = await newActivity(app, owner);
+      const { token } = await qr(owner, id);
+      await api(app, s).post('/claims', { token, ...at }).expect(200);
+      await api(app, owner).post(`/activities/${id}/close`).expect(200);
+      expect((await api(app, s).post('/claims', { token, ...at }).expect(200)).body.reason).toBe('already');
+    });
+
+    it('still lets the supervisor add someone by hand', async () => {
+      const id = await newActivity(app, owner);
+      await api(app, owner).post(`/activities/${id}/close`).expect(200);
+      expect((await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000001', name: 'ก' }).expect(200)).body.ok).toBe(true);
+    });
+
+    it('counts a roster as closed 24 hours after the end, before the closing job has stamped it', async () => {
+      const id = await newActivity(app, owner, { start: Date.now() - 30 * HOUR, end: Date.now() - 25 * HOUR });
+      expect((await activityRow(app, id)).closed_at).toBeNull();
+      expect((await api(app, owner).post(`/activities/${id}/qr`, { la: LAT, lo: LNG, ac: 10 }).expect(409)).body.error.code).toBe('ROSTER_CLOSED');
+      const open = await newActivity(app, owner, { start: Date.now() - 30 * HOUR, end: Date.now() - 23 * HOUR });
+      await api(app, owner).post(`/activities/${open}/qr`, { la: LAT, lo: LNG, ac: 10 }).expect(200);
+    });
+  });
+
   it('counts exactly right when many claim at once, including the same person twice', async () => {
     const id = await newActivity(app, owner);
     const { token } = await qr(owner, id);

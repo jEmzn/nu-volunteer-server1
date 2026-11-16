@@ -4,14 +4,14 @@ import { Throttle } from '@nestjs/throttler';
 import { CurrentUser, Roles, StudentUser } from '../../common/auth';
 import { AppConfig } from '../../common/config';
 import { ACTIVITY_RULE_COLUMNS, DbService, lockActivity, Row } from '../../common/db.service';
-import { ApiError, rosterLocked } from '../../common/errors';
+import { ApiError, rosterClosed, rosterLocked } from '../../common/errors';
 import { Bool, MAX_TIME_MS, Num, Str } from '../../common/fields';
 import { toOwnCredit } from '../../common/mappers';
 import { CLAIMS_LIMIT } from '../../common/rate-limit';
 import { checkTime, matchesMode, parseToken } from '../qr/qr-token';
 import { RealtimeService, rooms } from '../realtime/realtime';
 import { writeCredit } from './credit-writer';
-import { acceptScannedAt, judgeLocation } from './rules';
+import { acceptScannedAt, isRosterClosed, judgeLocation } from './rules';
 
 export class ClaimDto {
   @Str({ max: 2000, raw: true }) token: string;
@@ -66,6 +66,10 @@ export class ClaimsService {
 
       // A credit arriving now would land in a list the centre is already reviewing.
       if (activity.submitted_at) throw rosterLocked();
+      // Closing is the supervisor saying "nobody else". A scan kept offline still counts if it was made before closing:
+      // for a dynamic QR its time was checked against the token's short life above.
+      const at = acceptScannedAt(dto.scannedAt, now, times(activity));
+      if (isRosterClosed(activity as { closed_at: Date | null; end_at: Date }, at ?? now)) throw rosterClosed();
 
       if (!activity.walk_in) {
         const reg = await c.query('SELECT cancelled_at FROM registrations WHERE activity_id = $1 AND student_id = $2', [activity.id, user.sub]);
@@ -73,7 +77,6 @@ export class ClaimsService {
       }
 
       const location = judgeLocation({ loc_mode: activity.loc_mode, radius: activity.radius }, payload, dto);
-      const at = acceptScannedAt(dto.scannedAt, now, times(activity));
       return writeCredit(c, activity, {
         studentId: user.sub,
         name: user.name,

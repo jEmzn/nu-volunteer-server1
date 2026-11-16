@@ -46,8 +46,61 @@ export function acceptScannedAt(scannedAt: number | null | undefined, now: numbe
   return scannedAt;
 }
 
+/** The roster closes when the supervisor says so, or by itself this long after the end (the scheduler stamps it within 10 minutes). */
+const AUTO_CLOSE_MS = 24 * HOUR;
+
+/**
+ * Whether the roster was closed at moment `at`: server time, or an accepted scan time for a scan kept offline. Closed
+ * rosters take no more scans and give no QR. Adding people by hand stays open until the roster is sent.
+ */
+export function isRosterClosed(activity: { closed_at: Date | null; end_at: Date }, at: number): boolean {
+  const closedAt = activity.closed_at ? activity.closed_at.getTime() : activity.end_at.getTime() + AUTO_CLOSE_MS;
+  return at >= closedAt;
+}
+
+/** The most hours anyone can be given in the system, same as the limit on an activity's own hours. */
+const MAX_HOURS = 99;
+
+/**
+ * The most hours one person can have in an activity. Work on site often runs longer than planned, so the supervisor
+ * there decides, up to the field's own limit. A bottle exchange keeps its own limit per person, the university's rule.
+ */
+export function personHoursCap(activity: { hours: number | string; category_key: string }): number {
+  return activity.category_key === 'bottle' ? Number(activity.hours) : MAX_HOURS;
+}
+
 /** Whole hours earned from a bottle count, never above `max`. */
 export function bottleHours(items: number, perHour: number, max: number): number {
   if (!(perHour > 0) || !(items > 0)) return 0;
   return Math.min(Math.floor(items / perHour), max);
+}
+
+/** The part of an activity that decides how many hours a person gets. */
+export interface HoursRule {
+  category_key: string;
+  hours: number | string;
+  items_per_hour: number | null;
+}
+
+/** True if the new rule would give anyone less than the old one: fewer hours, or more bottles for each hour. */
+export function lowersHours(before: HoursRule, after: HoursRule): 'hours' | 'itemsPerHour' | null {
+  if (Number(after.hours) < Number(before.hours)) return 'hours';
+  if (after.category_key === 'bottle' && before.category_key === 'bottle' && (after.items_per_hour ?? 0) > (before.items_per_hour ?? 0)) return 'itemsPerHour';
+  return null;
+}
+
+/**
+ * What a credit becomes when the activity's rule gets more generous, or null to leave it alone. Only credits still at
+ * what the old rule gave are moved: hours a supervisor set by hand were a decision about that person.
+ */
+export function raisedHours(credit: { hours: number | string; items: number | null }, before: HoursRule, after: HoursRule): number | null {
+  const now = Number(credit.hours);
+  if (before.category_key !== after.category_key) return null;
+  if (after.category_key === 'bottle') {
+    if (credit.items === null || credit.items === undefined) return null;
+    if (now !== bottleHours(credit.items, before.items_per_hour ?? 0, Number(before.hours))) return null;
+    const next = bottleHours(credit.items, after.items_per_hour ?? 0, Number(after.hours));
+    return next > now ? next : null;
+  }
+  return now === Number(before.hours) && Number(after.hours) > now ? Number(after.hours) : null;
 }
