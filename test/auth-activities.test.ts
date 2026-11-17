@@ -511,6 +511,14 @@ describe('uploaded posters', () => {
     await http(app).get('/activities/nope/poster').expect(404);
   });
 
+  it('can be taken off: an empty poster clears an uploaded one (C19)', async () => {
+    const owner = await sup(app);
+    const id = await newActivity(app, owner, { poster: dataUrl(jpeg(3)) });
+    await api(app, owner).patch(`/activities/${id}`, { poster: '' }).expect(200);
+    expect(await shown(id)).toBe('');
+    await http(app).get(`/activities/${id}/poster`).expect(404);
+  });
+
   it('keep their URL when something else changes, even a counter', async () => {
     const owner = await sup(app);
     const id = await newActivity(app, owner, { poster: dataUrl(jpeg(7)) });

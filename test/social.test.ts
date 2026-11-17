@@ -221,6 +221,12 @@ describe('templates', () => {
     expect((await api(app, owner).get(`/activities/${id}`).expect(200)).body.templateId).toBe(t.id);
   });
 
+  it('can drop their poster (C19)', async () => {
+    const owner = await sup(app);
+    const t = (await api(app, owner).post('/templates', { ...body, poster: './posters/blood.jpg' }).expect(201)).body;
+    expect((await api(app, owner).patch(`/templates/${t.id}`, { poster: '' }).expect(200)).body.poster).toBe('');
+  });
+
   it('check the poster and the fields', async () => {
     const owner = await sup(app);
     await api(app, owner).post('/templates', { ...body, poster: 'http://x.example/a.jpg' }).expect(400);
