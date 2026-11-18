@@ -74,7 +74,7 @@ describe('ก. someone typed my id before I ever used it', () => {
       const n = (await noticesOf(app, id)).find((x) => x.kind === "idconflict")!;
       expect(n).toMatchObject({
         title: `รหัสนิสิต ${ID} มีผู้ใช้ 2 ชื่อ`,
-        body: 'ชั่วโมงของคุณบันทึกไว้ครบ เจ้าหน้าที่จะตรวจสอบ ถ้ารหัสนี้ไม่ใช่ของคุณ ออกจากระบบแล้วเข้าใหม่ด้วยรหัสที่ถูก',
+        body: 'ชั่วโมงของคุณบันทึกแยกไว้ในชื่อคุณ เจ้าหน้าที่จะตรวจสอบ ถ้ารหัสนี้ไม่ใช่ของคุณ ออกจากระบบแล้วเข้าใหม่ด้วยรหัสที่ถูก',
       });
       expect(`${n.title}${n.body}`).not.toContain('ธนพร');
       expect(`${n.title}${n.body}`).not.toContain('วอเมด');

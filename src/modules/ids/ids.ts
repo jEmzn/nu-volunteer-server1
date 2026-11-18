@@ -46,7 +46,7 @@ export async function tellTwins(c: Queryable, base: string) {
   const ids = (await accountsOf(c, base)).map((r) => r.id as string);
   await c.query(
     `INSERT INTO notices (student_id, kind, title, body) SELECT s, 'idconflict', $2, $3 FROM unnest($1::text[]) AS t(s)`,
-    [ids, `รหัสนิสิต ${base} มีผู้ใช้ ${ids.length} ชื่อ`, 'ชั่วโมงของคุณบันทึกไว้ครบ เจ้าหน้าที่จะตรวจสอบ ถ้ารหัสนี้ไม่ใช่ของคุณ ออกจากระบบแล้วเข้าใหม่ด้วยรหัสที่ถูก'],
+    [ids, `รหัสนิสิต ${base} มีผู้ใช้ ${ids.length} ชื่อ`, 'ชั่วโมงของคุณบันทึกแยกไว้ในชื่อคุณ เจ้าหน้าที่จะตรวจสอบ ถ้ารหัสนี้ไม่ใช่ของคุณ ออกจากระบบแล้วเข้าใหม่ด้วยรหัสที่ถูก'],
   );
 }
 
