@@ -1043,7 +1043,7 @@ describe('Excel files', () => {
     expect(noShow.slice(6, 8)).toEqual([0, 'ไม่มา']);
   });
 
-  it('the centre file has 7 columns, earners only, by id', async () => {
+  it('the centre file has 8 columns, earners only, by id', async () => {
     const res = await download(api(app, admin).get(`/activities/${id}/export?kind=admin`).expect(200));
     expect(decodeURIComponent(res.headers['content-disposition'])).toContain("filename*=UTF-8''บันทึกชั่วโมง 20-11-2569 เก็บขยะริมน้ำ.xlsx");
     // A plain table, with its header kept in view and filters on (R22).
@@ -1053,8 +1053,8 @@ describe('Excel files', () => {
     expect(wb.worksheets[0].autoFilter).toBeTruthy();
     const rows = await read(res.body);
     expect(rows).toEqual([
-      ['รหัสนิสิต', 'ชื่อ', 'กิจกรรม', 'หน่วยงาน', 'หมวด', 'วันที่', 'ชั่วโมง'],
-      ['65000002', 'สมหญิง รักเรียน', 'เก็บขยะริมน้ำ', 'หน่วยงาน A', 'จัดสถานที่', '20 พ.ย. 2569', 3],
+      ['รหัสนิสิต', 'ชื่อ', 'กิจกรรม', 'หน่วยงาน', 'หมวด', 'วันที่', 'ชั่วโมง', 'สถานะ'],
+      ['65000002', 'สมหญิง รักเรียน', 'เก็บขยะริมน้ำ', 'หน่วยงาน A', 'จัดสถานที่', '20 พ.ย. 2569', 3, 'ได้ชั่วโมง'],
     ]);
   });
 

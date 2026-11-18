@@ -4,16 +4,22 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Public, StudentUser, SupUser } from '../../common/auth';
 import { DbService } from '../../common/db.service';
-import { ApiError, notFound } from '../../common/errors';
-import { Name, Str } from '../../common/fields';
+import { ApiError, notFound, validation } from '../../common/errors';
+import { Bool, Name, Str } from '../../common/fields';
 import { maskName } from '../../common/format';
 import { toStudent, toStudentBrief } from '../../common/mappers';
 import { AUTH_STUDENT_LIMIT, AUTH_SUP_LIMIT } from '../../common/rate-limit';
+import { accountsOf, createTwin, sameName } from '../ids/ids';
 
 export class StudentLoginDto {
   @Str({ matches: /^\d{8}$/ }) studentId: string;
   /** Needed only the first time. A known id keeps the name already stored. */
   @Name({ optional: true, allowEmpty: true }) name?: string | null;
+  /**
+   * "รหัสนี้เป็นของฉันเอง": the id is held by another name and this person says it is theirs. They get an account of
+   * their own on the same id (item 23). Needs the name.
+   */
+  @Bool({ optional: true }) own?: boolean;
 }
 
 export class SupLoginDto {
@@ -29,8 +35,19 @@ export class AuthService {
   ) {}
 
   async student(dto: StudentLoginDto) {
+    if (dto.own && !dto.name) throw validation(['name'], 'กรุณากรอกชื่อ-นามสกุล');
     let row = await this.db.one('SELECT * FROM students WHERE id = $1', [dto.studentId]);
     let isNew = false;
+    if (row && dto.name) {
+      // Someone who already has an account of their own on this id signs in to it, never into a second one.
+      const accounts = await accountsOf(this.db, dto.studentId);
+      const mine = accounts.find((a) => sameName(a.name, dto.name!));
+      if (mine) row = mine;
+      else if (dto.own) {
+        row = await this.db.tx((c) => createTwin(c, dto.studentId, dto.name!));
+        isNew = true;
+      }
+    }
     if (!row) {
       if (!dto.name) throw notFound('ไม่พบรหัสนิสิตนี้ กรุณากรอกชื่อ-นามสกุล');
       row = await this.db.one('INSERT INTO students (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING RETURNING *', [dto.studentId, dto.name]);
@@ -65,7 +82,7 @@ export class AuthController {
   @HttpCode(200)
   @Public()
   @Throttle(AUTH_STUDENT_LIMIT)
-  @ApiOperation({ summary: 'นิสิตเข้าใช้งาน: รหัส 8 หลัก ครั้งแรกต้องมีชื่อ; ได้ token อายุ 30 วัน; รหัสที่มีอยู่แล้วได้ชื่อแบบปิดบางส่วน' })
+  @ApiOperation({ summary: 'นิสิตเข้าใช้งาน: รหัส 8 หลัก ครั้งแรกต้องมีชื่อ; ได้ token อายุ 30 วัน; รหัสที่มีอยู่แล้วได้ชื่อแบบปิดบางส่วน (บัญชีซ้อนที่ชื่อตรงก่อน); own: true สร้างบัญชีซ้อน {id}#n เมื่อชื่อไม่ตรงบัญชีใด' })
   student(@Body() dto: StudentLoginDto) {
     return this.auth.student(dto);
   }

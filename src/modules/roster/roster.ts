@@ -12,8 +12,10 @@ import { hoursChangedNotice, writeCredit } from '../claims/credit-writer';
 import { bottleHours, personHoursCap } from '../claims/rules';
 import { RealtimeService, rooms } from '../realtime/realtime';
 import { countStrikes, listStrikes, STRIKE_LIMIT } from './strikes';
+import { accountsOf, createTwin, idFlags, isTwin, sameName, withIdFlags } from '../ids/ids';
 
-const STUDENT_ID = /^\d{8}$/;
+/** An id as typed, or an account already on the roster: a second person on that id is "<id>#<n>" (item 23). */
+const ACCOUNT_ID = /^\d{8}(#\d{1,3})?$/;
 
 /**
  * Stricter than spec 8.4, agreed with the project owner: the screen hides these cases, but only the server can stop
@@ -27,7 +29,7 @@ function assertOpenForRegistration(activity: Row) {
 }
 
 export class AddCreditDto {
-  @Str({ matches: STUDENT_ID }) studentId: string;
+  @Str({ matches: ACCOUNT_ID }) studentId: string;
   /** Needed only if this student is not in the system yet. A known id keeps the stored name. */
   @Name({ optional: true, allowEmpty: true }) name?: string | null;
   /** 0 up to personHoursCap. Missing means full hours. */
@@ -36,6 +38,8 @@ export class AddCreditDto {
   @Str({ optional: true, max: 500 }) reason?: string | null;
   /** Let the student read the reason. Off unless the supervisor turns it on. */
   @Bool({ optional: true }) shareReason?: boolean;
+  /** "ไม่ใช่ชื่อนี้": the id is known under another name and this is someone else. Saved on an account of their own (item 23). */
+  @Bool({ optional: true }) separate?: boolean;
 }
 
 export class WaiveDto {
@@ -51,7 +55,7 @@ export class SetHoursDto {
 }
 
 export class AddBottlesDto {
-  @Str({ matches: STUDENT_ID }) studentId: string;
+  @Str({ matches: ACCOUNT_ID }) studentId: string;
   @Name({ optional: true, allowEmpty: true }) name?: string | null;
   @Int({ min: 1, max: 100000 }) add: number;
 }
@@ -142,7 +146,8 @@ export class RosterService {
   async registrations(user: SupUser, activityId: string) {
     assertOwner(user, await this.readActivity(activityId));
     const { rows } = await this.db.query('SELECT * FROM registrations WHERE activity_id = $1 ORDER BY at DESC', [activityId]);
-    return rows.map(toRegistration);
+    const flags = await idFlags(this.db, rows.map((r) => r.student_id));
+    return rows.map((r) => (flags.has(r.student_id) ? { ...toRegistration(r), idFlag: flags.get(r.student_id) } : toRegistration(r)));
   }
 
   async registration(user: User, activityId: string, studentId: string) {
@@ -173,7 +178,7 @@ export class RosterService {
     const activity = await this.readActivity(activityId);
     if (!isStudent(user)) assertOwner(user, activity);
     const { rows } = await this.db.query(`SELECT * FROM credits WHERE activity_id = $1 ORDER BY at ${order === 'desc' ? 'DESC' : 'ASC'}`, [activityId]);
-    if (!isStudent(user)) return rows.map(toCredit);
+    if (!isStudent(user)) return withIdFlags(rows, await idFlags(this.db, rows.map((r) => r.student_id))).map(toCredit);
     return rows.map((r) => (r.student_id === user.sub ? toOwnCredit(r) : toCreditForPeer(r)));
   }
 
@@ -181,7 +186,7 @@ export class RosterService {
     await this.assertSelfOrOwner(user, activityId, studentId);
     const row = await this.db.one('SELECT * FROM credits WHERE activity_id = $1 AND student_id = $2', [activityId, studentId]);
     if (!row) throw notFound('ไม่พบชั่วโมง');
-    return isStudent(user) ? toOwnCredit(row) : toCredit(row);
+    return isStudent(user) ? toOwnCredit(row) : toCredit(withIdFlags([row], await idFlags(this.db, [studentId]))[0]);
   }
 
   /** Someone who cannot scan. Skips QR, location and the registration check. */
@@ -194,8 +199,8 @@ export class RosterService {
       const hours = dto.hours ?? full;
       if (hours > personHoursCap(activity as { hours: number; category_key: string })) throw overCap(personHoursCap(activity as { hours: number; category_key: string }));
       if (hours < full && !dto.reason) throw validation(['reason'], 'ต้องระบุเหตุผล');
-      const name = await this.ensureStudent(c, dto.studentId, dto.name);
-      return writeCredit(c, activity, { studentId: dto.studentId, name, hours, method: 'manual', at: Date.now(), editedBy: user.supName, reason: dto.reason || undefined, reasonShared: !!dto.shareReason });
+      const who = await this.ensureStudent(c, dto.studentId, dto.name, !!dto.separate);
+      return writeCredit(c, activity, { studentId: who.id, name: who.name, hours, method: 'manual', at: Date.now(), editedBy: user.supName, reason: dto.reason || undefined, reasonShared: !!dto.shareReason });
     });
     if (!result.ok) return { ok: false, reason: 'already', credit: toCredit(result.row) };
     this.realtime.notify(rooms.afterCredit(activityId));
@@ -254,8 +259,8 @@ export class RosterService {
       const items = (current?.items ?? 0) + dto.add;
       const hours = bottleHours(items, activity.items_per_hour, Number(activity.hours));
       if (!current) {
-        const name = await this.ensureStudent(c, dto.studentId, dto.name);
-        return (await writeCredit(c, activity, { studentId: dto.studentId, name, hours, method: 'manual', at: Date.now(), editedBy: user.supName, items })).row;
+        const who = await this.ensureStudent(c, dto.studentId, dto.name, false);
+        return (await writeCredit(c, activity, { studentId: who.id, name: who.name, hours, method: 'manual', at: Date.now(), editedBy: user.supName, items })).row;
       }
       const updated = await c.query(`UPDATE credits SET hours = $3, items = $4, edited_by = $5, edited_at = now() WHERE activity_id = $1 AND student_id = $2 RETURNING *`, [
         activityId,
@@ -325,13 +330,25 @@ export class RosterService {
     if (removed.rowCount && Number(removed.rows[0].hours) > 0) await c.query('UPDATE activities SET credit_count = GREATEST(0, credit_count - 1) WHERE id = $1', [activityId]);
   }
 
-  /** A supervisor can add someone who never opened the app. A known id always keeps the stored name. */
-  private async ensureStudent(c: PoolClient, studentId: string, name: string | null | undefined): Promise<string> {
-    const known = (await c.query('SELECT name FROM students WHERE id = $1', [studentId])).rows[0];
-    if (known) return known.name;
+  /**
+   * A supervisor can add someone who never opened the app. A known id keeps the stored name, unless the supervisor said
+   * this is someone else (`separate`): then the account on that id with this name, or a new one of their own (item 23).
+   */
+  private async ensureStudent(c: PoolClient, studentId: string, name: string | null | undefined, separate: boolean): Promise<{ id: string; name: string }> {
+    if (isTwin(studentId)) {
+      const twin = (await c.query('SELECT id, name FROM students WHERE id = $1', [studentId])).rows[0];
+      if (!twin) throw notFound('ไม่พบนิสิต');
+      return twin;
+    }
+    const known = (await c.query('SELECT id, name FROM students WHERE id = $1', [studentId])).rows[0];
+    if (known && separate && name) {
+      const mine = (await accountsOf(c, studentId)).find((a) => sameName(a.name, name));
+      return mine ?? (await createTwin(c, studentId, name));
+    }
+    if (known) return known;
     if (!name) throw validation(['name'], 'ต้องระบุชื่อของนิสิตใหม่');
     await c.query('INSERT INTO students (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING', [studentId, name]);
-    return name;
+    return { id: studentId, name };
   }
 }
 

@@ -17,6 +17,7 @@ import { ChatModule } from './modules/chat/chat';
 import { ClaimsModule } from './modules/claims/claims';
 import { ExportModule } from './modules/export/export';
 import { HealthModule } from './modules/health/health';
+import { IdConflictsModule } from './modules/ids/id-conflicts';
 import { NoticesModule } from './modules/notices/notices';
 import { QrModule } from './modules/qr/qr';
 import { RealtimeModule } from './modules/realtime/realtime';
@@ -73,6 +74,7 @@ export class CoreModule {}
     ExportModule,
     SchedulerModule,
     HealthModule,
+    IdConflictsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: AuthGuard },
