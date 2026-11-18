@@ -670,6 +670,9 @@ describe('removing', () => {
     await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000002' }).expect(200);
     await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000003', name: 'ค' }).expect(200);
     expect((await activityRow(app, id)).reg_count).toBe(1);
+    // A walk-in with hours cannot cancel (VB-24); once the hours are taken back, it can.
+    await api(app, b).delete(`/activities/${id}/registrations/me`).expect(409);
+    await api(app, owner).delete(`/activities/${id}/credits/65000002`).expect(200);
     await api(app, b).delete(`/activities/${id}/registrations/me`).expect(200);
     await api(app, owner).delete(`/activities/${id}/registrations/65000003`).expect(200);
     expect((await activityRow(app, id)).reg_count).toBe(1);
