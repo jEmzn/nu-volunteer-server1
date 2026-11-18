@@ -48,6 +48,8 @@ export function distanceText(m: number) {
 function status(activity: Row, reg: Row | undefined, c: Row | undefined, closed: boolean) {
   if (!c) return closed ? 'ไม่มา' : 'ยังไม่สแกน';
   if (activity.category_key === 'bottle') return Number(c.hours) > 0 ? 'ได้ชั่วโมง' : `ยังไม่ครบ ${activity.items_per_hour} ขวด`;
+  // Left at 0 by the supervisor: in the roster with the reason in the notes, but without hours (VB-26).
+  if (!(Number(c.hours) > 0)) return 'ไม่ได้ชั่วโมง';
   return reg?.walk_in ? 'walk-in' : 'ได้ชั่วโมง';
 }
 

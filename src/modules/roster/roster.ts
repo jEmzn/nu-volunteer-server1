@@ -123,8 +123,9 @@ export class RosterService {
       const activity = await lockActivity(c, activityId);
       if (!activity) throw notFound(NO_ACTIVITY);
       // Hours already given hold the seat: a cancel now would free it for someone else and cost a credit.
-      const credit = await c.query('SELECT 1 FROM credits WHERE activity_id = $1 AND student_id = $2', [activityId, user.sub]);
-      if (credit.rowCount) throw new ApiError(409, 'CANCEL_HAS_CREDIT', 'ได้ชั่วโมงกิจกรรมนี้แล้ว ยกเลิกไม่ได้');
+      // Someone the supervisor left at 0 hours (VB-26) has no hours, but the roster already has a decision about them.
+      const credit = (await c.query('SELECT hours FROM credits WHERE activity_id = $1 AND student_id = $2', [activityId, user.sub])).rows[0];
+      if (credit) throw new ApiError(409, 'CANCEL_HAS_CREDIT', Number(credit.hours) > 0 ? 'ได้ชั่วโมงกิจกรรมนี้แล้ว ยกเลิกไม่ได้' : 'ผู้ดูแลบันทึกผลของคุณในกิจกรรมนี้แล้ว ยกเลิกไม่ได้');
       const updated = await c.query(
         `UPDATE registrations SET cancelled_at = now(), late = now() > $3::timestamptz - make_interval(days => $4)
          WHERE activity_id = $1 AND student_id = $2 AND cancelled_at IS NULL RETURNING late, walk_in`,
@@ -221,14 +222,14 @@ export class RosterService {
         `UPDATE credits SET hours = $3, full_hours = $7, reason = $4, reason_shared = $6, edited_by = $5, edited_at = now() WHERE activity_id = $1 AND student_id = $2 RETURNING *`,
         [activityId, studentId, dto.hours, reason, user.supName, shared, full],
       );
-      // A bottle exchange counts only people with hours, so crossing 0 either way moves the count.
-      if (activity.category_key === 'bottle' && Number(current.hours) > 0 !== dto.hours > 0)
-        await c.query('UPDATE activities SET credit_count = GREATEST(0, credit_count + $2) WHERE id = $1', [activityId, dto.hours > 0 ? 1 : -1]);
+      // Only people with hours count (VB-26), so crossing 0 either way moves the count.
+      const crossed = Number(current.hours) > 0 !== dto.hours > 0;
+      if (crossed) await c.query('UPDATE activities SET credit_count = GREATEST(0, credit_count + $2) WHERE id = $1', [activityId, dto.hours > 0 ? 1 : -1]);
       await hoursChangedNotice(c, activity, studentId, Number(current.hours), dto.hours, shared ? reason : null);
-      return updated.rows[0];
+      return { row: updated.rows[0], crossed };
     });
-    this.realtime.notify([rooms.credits(activityId)]);
-    return toCredit(row);
+    this.realtime.notify(row.crossed ? rooms.afterCredit(activityId) : [rooms.credits(activityId)]);
+    return toCredit(row.row);
   }
 
   async removeCredit(user: SupUser, activityId: string, studentId: string) {
@@ -320,9 +321,8 @@ export class RosterService {
 
   private async deleteCredit(c: PoolClient, activityId: string, studentId: string) {
     const removed = await c.query('DELETE FROM credits WHERE activity_id = $1 AND student_id = $2 RETURNING hours', [activityId, studentId]);
-    // A bottle credit below one hour was never counted.
-    if (removed.rowCount)
-      await c.query("UPDATE activities SET credit_count = GREATEST(0, credit_count - 1) WHERE id = $1 AND (category_key <> 'bottle' OR $2::numeric > 0)", [activityId, removed.rows[0].hours]);
+    // A credit at 0 hours was never counted (VB-26).
+    if (removed.rowCount && Number(removed.rows[0].hours) > 0) await c.query('UPDATE activities SET credit_count = GREATEST(0, credit_count - 1) WHERE id = $1', [activityId]);
   }
 
   /** A supervisor can add someone who never opened the app. A known id always keeps the stored name. */

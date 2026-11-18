@@ -314,6 +314,22 @@ describe('Excel rows', () => {
     ]);
   });
 
+  it('says ไม่ได้ชั่วโมง, with the reason, for someone left at 0 hours in an ordinary activity (VB-26)', () => {
+    const setup = { ...act, category_key: 'setup', closed_at: new Date() };
+    const credits = [
+      { ...base, student_id: '1', name: 'ก', method: 'manual', hours: 0, reason: 'ไม่ได้ทำงาน', at: new Date(Date.UTC(2026, 10, 20, 2)) },
+      { ...base, student_id: '2', name: 'ข', hours: 0, reason: 'กลับก่อน', at: new Date(Date.UTC(2026, 10, 20, 3)) },
+    ];
+    const regs = [
+      { student_id: '1', name: 'ก', walk_in: true, cancelled_at: null },
+      { student_id: '2', name: 'ข', walk_in: false, cancelled_at: null },
+    ];
+    expect(supRows(setup, regs, credits, TZ).map((r) => [r[6], r[7], r[10]])).toEqual([
+      [0, 'ไม่ได้ชั่วโมง', 'ไม่ได้ทำงาน'],
+      [0, 'ไม่ได้ชั่วโมง', 'กลับก่อน'],
+    ]);
+  });
+
   it('calls nobody a no-show until the roster closes, by hand or a day after the end (R15)', () => {
     const regs = [{ student_id: '3', name: 'ขวัญ', walk_in: false, cancelled_at: null }];
     const open = { ...act, category_key: 'setup', end_at: new Date(Date.UTC(2026, 10, 20, 9)) };

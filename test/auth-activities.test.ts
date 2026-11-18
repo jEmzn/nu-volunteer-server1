@@ -371,7 +371,8 @@ describe('editing an activity', () => {
       expect((await noticesOf(app, '65000001')).map((n) => n.title)).toEqual(['ได้รับ 6 ชั่วโมง', 'แก้ชั่วโมงเป็น 8 ชั่วโมง']);
       expect(await noticesOf(app, '65000003')).toHaveLength(1);
       expect(await noticesOf(app, '65000005')).toHaveLength(0);
-      expect((await activityRow(app, id)).credit_count).toBe(5);
+      // The one left at 0 hours is not counted (VB-26).
+      expect((await activityRow(app, id)).credit_count).toBe(4);
     });
 
     it('raiseCredited does nothing unless the hours go up', async () => {

@@ -570,6 +570,37 @@ describe('editing hours', () => {
   });
 });
 
+describe('0 hours in an ordinary activity (VB-26)', () => {
+  let owner: string;
+  let id: string;
+  beforeEach(async () => {
+    owner = await sup(app);
+    id = await newActivity(app, owner);
+  });
+
+  it('is not counted when added at 0', async () => {
+    await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000001', name: 'ก', hours: 0, reason: 'ไม่ได้ทำงาน' }).expect(200);
+    expect((await activityRow(app, id)).credit_count).toBe(0);
+    await api(app, owner).delete(`/activities/${id}/credits/65000001`).expect(200);
+    expect((await activityRow(app, id)).credit_count).toBe(0);
+  });
+
+  it('leaves the count when edited to 0, and comes back when given hours again', async () => {
+    await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000001', name: 'ก' }).expect(200);
+    await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000002', name: 'ข' }).expect(200);
+    expect((await activityRow(app, id)).credit_count).toBe(2);
+    await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 0, reason: 'ไม่ได้ทำงาน' }).expect(200);
+    expect((await activityRow(app, id)).credit_count).toBe(1);
+    await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 0, reason: 'ไม่ได้ทำงานเลย' }).expect(200);
+    expect((await activityRow(app, id)).credit_count).toBe(1);
+    await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 6 }).expect(200);
+    expect((await activityRow(app, id)).credit_count).toBe(2);
+    await api(app, owner).patch(`/activities/${id}/credits/65000002`, { hours: 0, reason: 'กลับก่อน' }).expect(200);
+    await api(app, owner).delete(`/activities/${id}/credits/65000002`).expect(200);
+    expect((await activityRow(app, id)).credit_count).toBe(1);
+  });
+});
+
 describe('sharing the reason with the student', () => {
   let owner: string;
   let me: string;
