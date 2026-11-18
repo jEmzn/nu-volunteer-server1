@@ -122,6 +122,9 @@ export class RosterService {
     const late = await this.db.tx(async (c) => {
       const activity = await lockActivity(c, activityId);
       if (!activity) throw notFound(NO_ACTIVITY);
+      // Hours already given hold the seat: a cancel now would free it for someone else and cost a credit.
+      const credit = await c.query('SELECT 1 FROM credits WHERE activity_id = $1 AND student_id = $2', [activityId, user.sub]);
+      if (credit.rowCount) throw new ApiError(409, 'CANCEL_HAS_CREDIT', 'ได้ชั่วโมงกิจกรรมนี้แล้ว ยกเลิกไม่ได้');
       const updated = await c.query(
         `UPDATE registrations SET cancelled_at = now(), late = now() > $3::timestamptz - make_interval(days => $4)
          WHERE activity_id = $1 AND student_id = $2 AND cancelled_at IS NULL RETURNING late, walk_in`,

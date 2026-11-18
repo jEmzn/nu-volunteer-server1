@@ -61,6 +61,20 @@ describe('registering', () => {
     expect((await activityRow(app, id)).reg_count).toBe(1);
   });
 
+  it('refuses to cancel once the student has hours, and keeps the seat (VB-24)', async () => {
+    const s = await student(app);
+    const owner = await sup(app);
+    const id = await newActivity(app, owner, { start: Date.now() - HOUR, end: Date.now() + HOUR, capLimit: true, capacity: 1 });
+    await api(app, s).post(`/activities/${id}/registrations`).expect(200);
+    await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000001' }).expect(200);
+    const res = await api(app, s).delete(`/activities/${id}/registrations/me`).expect(409);
+    expect(res.body.error).toMatchObject({ code: 'CANCEL_HAS_CREDIT', message: 'ได้ชั่วโมงกิจกรรมนี้แล้ว ยกเลิกไม่ได้' });
+    expect(await regRow(app, id, '65000001')).toMatchObject({ cancelled_at: null, late: false });
+    expect((await activityRow(app, id)).reg_count).toBe(1);
+    const other = await student(app, '65000002', 'ข');
+    expect((await api(app, other).post(`/activities/${id}/registrations`).expect(200)).body.result).toBe('full');
+  });
+
   describe('when the activity is not open', () => {
     const refused = async (id: string, token: string, code: string) => {
       const res = await api(app, token).post(`/activities/${id}/registrations`).expect(409);
