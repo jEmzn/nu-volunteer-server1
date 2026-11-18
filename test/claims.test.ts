@@ -454,13 +454,20 @@ describe('writing the credit', () => {
       expect(res.body.error.code).toBe('ROSTER_CLOSED');
     });
 
+    it('does not say the supervisor closed it when it closed by itself a day after the end', async () => {
+      const id = await newActivity(app, owner);
+      await dbOf(app).query(`UPDATE activities SET start_at = now() - interval '27 hours', end_at = now() - interval '25 hours' WHERE id = $1`, [id]);
+      const res = await api(app, owner).post(`/activities/${id}/qr`, { la: LAT, lo: LNG, ac: 10 }).expect(409);
+      expect(res.body.error).toMatchObject({ code: 'ROSTER_CLOSED', message: 'ปิดรับชั่วโมงแล้ว แจ้งรหัสนิสิตกับผู้ดูแลกิจกรรม' });
+    });
+
     it('refuses a scan of a QR shown before closing, with a message for the student, and writes nothing', async () => {
       const s = await student(app);
       const id = await newActivity(app, owner);
       const { token } = await qr(owner, id);
       await api(app, owner).post(`/activities/${id}/close`).expect(200);
       const res = await api(app, s).post('/claims', { token, ...at }).expect(409);
-      expect(res.body.error).toMatchObject({ code: 'ROSTER_CLOSED', message: expect.stringContaining('ปิดรายชื่อแล้ว') });
+      expect(res.body.error).toMatchObject({ code: 'ROSTER_CLOSED', message: 'ปิดรับชั่วโมงแล้ว แจ้งรหัสนิสิตกับผู้ดูแลกิจกรรม' });
       expect(await creditRow(app, id, '65000001')).toBeUndefined();
       expect(await regRow(app, id, '65000001')).toBeUndefined();
       expect((await activityRow(app, id)).credit_count).toBe(0);
