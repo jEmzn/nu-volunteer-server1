@@ -1,12 +1,13 @@
-import { Body, Controller, Delete, Get, Injectable, Module, Param, Patch, Post } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { CurrentUser, Roles, SupUser } from '../../common/auth';
+import { Body, Controller, Delete, Get, Injectable, Module, Param, Patch, Post, Query, Res } from '@nestjs/common';
+import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import type { Response } from 'express';
+import { CurrentUser, Public, Roles, SupUser } from '../../common/auth';
 import { DbService } from '../../common/db.service';
 import { forbidden, notFound } from '../../common/errors';
 import { assertNotNull, assertRequired, Bool, Int, Nested, OneOf, Str } from '../../common/fields';
 import { newId } from '../../common/format';
 import { toTemplate } from '../../common/mappers';
-import { assertPoster } from '../../common/poster';
+import { POSTER_CACHE, posterImage, posterToStore, TEMPLATE_POSTER_COLUMN, templatePosterId } from '../../common/poster';
 
 export class TemplateSettingsDto {
   @Bool({ optional: true }) capLimit?: boolean;
@@ -31,14 +32,23 @@ export class TemplateDto {
 export class TemplatesService {
   constructor(private readonly db: DbService) {}
 
-  async list(user: SupUser) {
-    const { rows } = await this.db.query('SELECT * FROM templates WHERE org_code = $1 ORDER BY created_at ASC', [user.orgCode]);
+  /** With urls, an uploaded poster comes as a URL (VB-27). Without, as the image, for a web deployed before that. */
+  async list(user: SupUser, urls = false) {
+    const columns = urls ? `id, org_code, title, description, hours, settings, created_by, created_at, ${TEMPLATE_POSTER_COLUMN}` : '*';
+    const { rows } = await this.db.query(`SELECT ${columns} FROM templates WHERE org_code = $1 ORDER BY created_at ASC`, [user.orgCode]);
     return rows.map(toTemplate);
+  }
+
+  async poster(id: string) {
+    const row = await this.db.one('SELECT poster FROM templates WHERE id = $1', [id]);
+    const image = row && posterImage(row.poster);
+    if (!image) throw notFound('ไม่พบรูป');
+    return image;
   }
 
   async create(user: SupUser, dto: TemplateDto) {
     assertRequired(dto as Record<string, unknown>, ['title', 'hours']);
-    if (dto.poster) assertPoster(dto.poster);
+    if (dto.poster) dto.poster = await posterToStore(this.db, user.orgCode, dto.poster);
     const row = await this.db.one(`INSERT INTO templates (id, org_code, title, poster, description, hours, settings, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`, [
       newId(),
       user.orgCode,
@@ -60,8 +70,10 @@ export class TemplatesService {
 
   async update(user: SupUser, id: string, dto: TemplateDto) {
     assertNotNull(dto as Record<string, unknown>, ['title', 'poster', 'description', 'hours', 'settings']);
-    if (dto.poster) assertPoster(dto.poster);
     await this.assertOwn(user, id);
+    // Its own URL back means the image did not change.
+    if (dto.poster && templatePosterId(dto.poster) === id) delete dto.poster;
+    if (dto.poster) dto.poster = await posterToStore(this.db, user.orgCode, dto.poster);
     const row = await this.db.one(
       `UPDATE templates SET title = COALESCE($2, title), poster = COALESCE($3, poster), description = COALESCE($4, description),
          hours = COALESCE($5, hours), settings = COALESCE($6::jsonb, settings)
@@ -87,8 +99,16 @@ export class TemplatesController {
 
   @Get()
   @ApiOperation({ summary: 'เทมเพลตของหน่วยงานตัวเอง เก่าสุดก่อน' })
-  list(@CurrentUser() user: SupUser) {
-    return this.templates.list(user);
+  @ApiQuery({ name: 'posters', required: false, enum: ['url'], description: 'url: รูปที่อัปโหลดมาเป็น URL แทนตัวรูป' })
+  list(@CurrentUser() user: SupUser, @Query('posters') posters?: string) {
+    return this.templates.list(user, posters === 'url');
+  }
+
+  @Get(':id/poster')
+  @Public()
+  @ApiOperation({ summary: 'รูปโปสเตอร์ของเทมเพลต เป็นไฟล์ JPEG; ใช้ค่า poster จาก GET /templates?posters=url เป็น URL' })
+  async poster(@Param('id') id: string, @Res() res: Response) {
+    res.type('jpeg').set('Cache-Control', POSTER_CACHE).send(await this.templates.poster(id));
   }
 
   @Post()

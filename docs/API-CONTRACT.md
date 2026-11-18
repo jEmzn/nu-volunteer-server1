@@ -226,7 +226,7 @@
 | รูปในตัวเว็บ | `./posters/<ชื่อ>.jpg` |
 | รูปที่อัปโหลด | `/activities/:id/poster?v=<เวอร์ชัน>` ให้เติมที่อยู่ของ API ด้านหน้า |
 
-ส่ง URL นี้กลับมาใน POST หรือ PATCH ไม่ได้ จะได้ 400 เทมเพลตยังส่ง data URL เหมือนเดิม
+ส่ง URL นี้กลับมาใน POST หรือ PATCH ไม่ได้ จะได้ 400 แต่ส่ง URL รูปของเทมเพลตในหน่วยงานตัวเอง (`/templates/:id/poster?v=...` มีที่อยู่ API ด้านหน้าหรือไม่ก็ได้) ได้ server คัดลอกรูปของเทมเพลตนั้นมาเก็บ
 
 **`GET /activities/:id/poster`** (สาธารณะ) → ไฟล์ JPEG มี `ETag` และ `Cache-Control: public, max-age=86400` ไม่มีรูปที่อัปโหลดได้ 404
 
@@ -352,12 +352,16 @@ error: `QR_INVALID`, `QR_EXPIRED`, `QR_EARLY`, `QR_LATE`, `NOT_REGISTERED`, `ROS
 
 | Endpoint | ส่ง | ได้ |
 | --- | --- | --- |
-| `GET /templates` | | `Template[]` เก่าสุดก่อน |
+| `GET /templates` | `?posters=url` ไม่บังคับ | `Template[]` เก่าสุดก่อน |
 | `POST /templates` (201) | `{ title, hours, poster?, description?, settings? }` | `Template` |
 | `PATCH /templates/:id` | field เดียวกัน ไม่บังคับทุกตัว | `Template` |
 | `DELETE /templates/:id` | | `{ "ok": true }` |
 
 `settings` ที่ขาดใช้ค่าเริ่มต้น: capacity 30, qrMode dynamic, qrInterval 10, locMode on, radius 150
+
+`poster` ของเทมเพลต (VB-27): ไม่ส่ง `?posters=url` ได้ data URL แบบเดิม (สำหรับเว็บรุ่นก่อน) ส่งมาแล้วรูปที่อัปโหลดเป็น `/templates/:id/poster?v=<เวอร์ชัน>` ให้เติมที่อยู่ของ API ด้านหน้า ส่ง URL นี้ใน POST หรือ PATCH ของกิจกรรมหรือเทมเพลตได้ server คัดลอกรูปให้ ส่ง URL ของเทมเพลตตัวเองกลับมาใน PATCH ถือว่าไม่เปลี่ยนรูป
+
+**`GET /templates/:id/poster`** (สาธารณะ) → ไฟล์ JPEG แบบเดียวกับ `GET /activities/:id/poster`
 
 ## 5. รูปแบบ QR token
 

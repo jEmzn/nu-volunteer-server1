@@ -8,7 +8,7 @@ import { ApiError, notFound, validation } from '../../common/errors';
 import { assertNotNull, assertRequired, Bool, Int, MAX_TIME_MS, Name, Nested, Num, OneOf, Str } from '../../common/fields';
 import { fmtHours, newId } from '../../common/format';
 import { toActivity } from '../../common/mappers';
-import { assertPoster, POSTER_CACHE, POSTER_COLUMN, posterImage } from '../../common/poster';
+import { POSTER_CACHE, POSTER_COLUMN, posterImage, posterToStore } from '../../common/poster';
 import { HoursRule, lowersHours, raisedHours } from '../claims/rules';
 import { RealtimeService, rooms } from '../realtime/realtime';
 
@@ -132,7 +132,7 @@ export class ActivitiesService {
     assertRequired(dto as Record<string, unknown>, REQUIRED);
     assertNotNull(dto as Record<string, unknown>, NOT_CLEARABLE);
     if (dto.end! <= dto.start!) throw validation(['end'], 'เวลาสิ้นสุดต้องหลังเวลาเริ่ม');
-    if (dto.poster) assertPoster(dto.poster);
+    if (dto.poster) dto.poster = await posterToStore(this.db, user.orgCode, dto.poster);
     const cols = { id: newId(), org: user.orgName, org_code: user.orgCode, ...columnsOf(dto) };
     const names = Object.keys(cols);
     const row = await this.db.one(`INSERT INTO activities (${names.join(', ')}) VALUES (${names.map((_, i) => `$${i + 1}`).join(', ')}) RETURNING id`, Object.values(cols));
@@ -142,7 +142,7 @@ export class ActivitiesService {
 
   async update(user: SupUser, id: string, dto: ActivityDto) {
     assertNotNull(dto as Record<string, unknown>, NOT_CLEARABLE);
-    if (dto.poster) assertPoster(dto.poster);
+    if (dto.poster) dto.poster = await posterToStore(this.db, user.orgCode, dto.poster);
     const cols = columnsOf(dto);
     const raised = await this.db.tx(async (c) => {
       const activity = await lockActivity(c, id);
