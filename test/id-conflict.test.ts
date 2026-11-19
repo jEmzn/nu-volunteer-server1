@@ -181,13 +181,13 @@ describe('Excel', () => {
     const { owner, act, mine } = await sharedId();
     await claim(mine.token, await qr(owner, act), 'dev-owner');
     const sup = await read((await download(api(app, owner).get(`/activities/${act}/export?kind=sup`).expect(200))).body);
-    expect(sup.slice(1).map((r) => [r[1], r[2], r[7]])).toEqual([
+    expect(sup.slice(1).map((r) => [r[1], r[2], r[9]])).toEqual([
       [ID, TYPO, 'รอตรวจรหัส'],
       [ID, OWNER, 'รอตรวจรหัส'],
     ]);
     const admin = await sup_admin();
     const centre = await read((await download(api(app, admin).get(`/activities/${act}/export?kind=admin`).expect(200))).body);
-    expect(centre.slice(1).map((r) => [r[0], r[7]])).toEqual([
+    expect(centre.slice(1).map((r) => [r[0], r[9]])).toEqual([
       [ID, 'รอตรวจรหัส'],
       [ID, 'รอตรวจรหัส'],
     ]);

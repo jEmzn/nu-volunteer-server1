@@ -1,4 +1,5 @@
 import { NestExpressApplication } from '@nestjs/platform-express';
+import ExcelJS from 'exceljs';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Client } from 'pg';
@@ -284,6 +285,92 @@ describe('who gets the personal answers', () => {
     const admin = await sup(app, ORG_ADMIN, 'แอดมิน');
     const res = await api(app, admin).patch(`/activities/${id}/registrations/65000001`, { waived: true });
     expect(leaks(res.body)).not.toContain('081-234 5678');
+  });
+});
+
+describe('the Excel files carry the form', () => {
+  const download = (r: any) =>
+    r.buffer(true).parse((res: any, cb: any) => {
+      const parts: Buffer[] = [];
+      res.on('data', (d: Buffer) => parts.push(d));
+      res.on('end', () => cb(null, Buffer.concat(parts)));
+    });
+  // A blank cell reads back as undefined or '': both mean nothing was written.
+  const read = async (body: Buffer) => {
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(body as any);
+    const rows: string[][] = [];
+    wb.worksheets[0].eachRow((r) => rows.push(Array.from({ length: r.cellCount }, (_, i) => String(r.getCell(i + 1).value ?? ''))));
+    return rows;
+  };
+  const file = async (token: string, id: string, kind: 'sup' | 'admin') => read((await download(api(app, token).get(`/activities/${id}/export?kind=${kind}`).expect(200))).body);
+
+  async function setup() {
+    const owner = await sup(app);
+    const id = await newActivity(app, owner, withQuestions());
+    await api(app, await student(app)).post(`/activities/${id}/registrations`, { ...FORM, answers: { q1: 'ปี 2', q2: '=SUM(1)', q3: 'M' } }).expect(200);
+    // Registered through an older app: no phone or faculty, only the required answer.
+    await api(app, await student(app, '65000002', 'ข เก่า')).post(`/activities/${id}/registrations`, { answers: { q1: 'ปี 1' } }).expect(200);
+    // Walk-in: the supervisor gave hours to someone who never registered.
+    await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000003', name: 'ค วอล์คอิน', hours: 2, reason: 'มาหน้างาน' }).expect(200);
+    for (const s of ['65000001', '65000002']) await api(app, owner).post(`/activities/${id}/credits`, { studentId: s, name: s === '65000001' ? 'สมชาย ใจดี' : 'ข เก่า', hours: 3, reason: 'ช่วยงาน' }).expect(200);
+    return { owner, id };
+  }
+
+  it('the supervisor file puts phone, faculty and one column per question after the name, in the activity order', async () => {
+    const { owner, id } = await setup();
+    const rows = await file(owner, id, 'sup');
+    expect(rows[0].slice(0, 9)).toEqual(['ลำดับ', 'รหัสนิสิต', 'ชื่อ', 'เบอร์โทร', 'คณะ', 'ชั้นปี', 'โรคประจำตัว', 'ขนาดเสื้อ', 'กิจกรรม']);
+    expect(rows[0]).toHaveLength(16);
+    const byId = Object.fromEntries(rows.slice(1).map((r) => [r[1], r]));
+    // A formula typed as an answer is stopped like every other cell.
+    expect(byId['65000001'].slice(3, 8)).toEqual(['081-234 5678', 'คณะวิศวกรรมศาสตร์', 'ปี 2', "'=SUM(1)", 'M']);
+    // No phone or faculty and the walk-in with no form: blank, not "undefined" or "null".
+    expect(byId['65000002'].slice(3, 8)).toEqual(['', '', 'ปี 1', '', '']);
+    expect(byId['65000003'].slice(3, 8)).toEqual(['', '', '', '', '']);
+  });
+
+  it('leaves out an answer whose question was removed, and adds a column for a question added later', async () => {
+    const { owner, id } = await setup();
+    const next = [QUESTIONS[0], { id: 'q9', label: 'ผู้ติดตาม', type: 'text', required: false }];
+    await api(app, owner).patch(`/activities/${id}`, { questions: next }).expect(200);
+    const rows = await file(owner, id, 'sup');
+    expect(rows[0].slice(3, 8)).toEqual(['เบอร์โทร', 'คณะ', 'ชั้นปี', 'ผู้ติดตาม', 'กิจกรรม']);
+    expect(rows.slice(1).find((r) => r[1] === '65000001')!.slice(3, 7)).toEqual(['081-234 5678', 'คณะวิศวกรรมศาสตร์', 'ปี 2', '']);
+    expect(JSON.stringify(rows)).not.toContain('SUM(1)');
+  });
+
+  it('an activity without questions still has phone and faculty', async () => {
+    const owner = await sup(app);
+    const id = await newActivity(app, owner, later());
+    await api(app, await student(app)).post(`/activities/${id}/registrations`, FORM).expect(200);
+    const rows = await file(owner, id, 'sup');
+    expect(rows[0].slice(0, 6)).toEqual(['ลำดับ', 'รหัสนิสิต', 'ชื่อ', 'เบอร์โทร', 'คณะ', 'กิจกรรม']);
+    expect(rows[1].slice(3, 5)).toEqual(['081-234 5678', 'คณะวิศวกรรมศาสตร์']);
+  });
+
+  it('stops a formula in a question label', async () => {
+    const owner = await sup(app);
+    const id = await newActivity(app, owner, { ...later(), questions: [{ id: 'q', label: '=1+1', type: 'text', required: false }] });
+    expect((await file(owner, id, 'sup'))[0][5]).toBe("'=1+1");
+  });
+
+  it('the centre file has the same columns after the name, only for people who earned hours', async () => {
+    const { id } = await setup();
+    const admin = await sup(app, ORG_ADMIN, 'แอดมิน');
+    const rows = await file(admin, id, 'admin');
+    expect(rows[0]).toEqual(['รหัสนิสิต', 'ชื่อ', 'เบอร์โทร', 'คณะ', 'ชั้นปี', 'โรคประจำตัว', 'ขนาดเสื้อ', 'กิจกรรม', 'หน่วยงาน', 'หมวด', 'วันที่', 'ชั่วโมง', 'สถานะ']);
+    const byId = Object.fromEntries(rows.slice(1).map((r) => [r[0], r]));
+    expect(Object.keys(byId).sort()).toEqual(['65000001', '65000002', '65000003']);
+    expect(byId['65000001'].slice(2, 7)).toEqual(['081-234 5678', 'คณะวิศวกรรมศาสตร์', 'ปี 2', "'=SUM(1)", 'M']);
+    expect(byId['65000002'].slice(2, 7)).toEqual(['', '', 'ปี 1', '', '']);
+    expect(byId['65000003'].slice(2, 7)).toEqual(['', '', '', '', '']);
+  });
+
+  it('another organisation still cannot download the file, and the centre file stays for the admin', async () => {
+    const { owner, id } = await setup();
+    await api(app, await sup(app, ORG_B, 'ผู้ดูแล ข')).get(`/activities/${id}/export?kind=sup`).expect(403);
+    await api(app, owner).get(`/activities/${id}/export?kind=admin`).expect(403);
   });
 });
 

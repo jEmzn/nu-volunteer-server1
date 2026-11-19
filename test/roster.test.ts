@@ -1005,25 +1005,25 @@ describe('Excel files', () => {
     await dbOf(app).query('UPDATE activities SET start_at = $2, end_at = $3 WHERE id = $1', [id, new Date(Date.UTC(2026, 10, 20, 1)), new Date(Date.UTC(2026, 10, 20, 8))]);
   });
 
-  it('the supervisor file is a flat table with 11 columns in order, Thai intact, formulas stopped', async () => {
+  it('the supervisor file is a flat table with 13 columns in order, Thai intact, formulas stopped', async () => {
     const res = await download(api(app, owner).get(`/activities/${id}/export?kind=sup`).expect(200));
     expect(res.headers['content-type']).toContain('spreadsheetml');
     // What it is, the activity's day, then the title (R22).
     expect(decodeURIComponent(res.headers['content-disposition'])).toContain("filename*=UTF-8''รายชื่อ 20-11-2569 เก็บขยะริมน้ำ.xlsx");
     const rows = await read(res.body);
-    expect(rows[0]).toEqual(['ลำดับ', 'รหัสนิสิต', 'ชื่อ', 'กิจกรรม', 'หมวด', 'วันที่', 'ชั่วโมง', 'สถานะ', 'เวลายืนยัน', 'ยืนยันโดย', 'หมายเหตุ']);
+    expect(rows[0]).toEqual(['ลำดับ', 'รหัสนิสิต', 'ชื่อ', 'เบอร์โทร', 'คณะ', 'กิจกรรม', 'หมวด', 'วันที่', 'ชั่วโมง', 'สถานะ', 'เวลายืนยัน', 'ยืนยันโดย', 'หมายเหตุ']);
     expect(rows).toHaveLength(4);
     const byId = Object.fromEntries(rows.slice(1).map((r) => [r[1], r]));
-    expect(byId['65000002'].slice(1, 8)).toEqual(['65000002', 'สมหญิง รักเรียน', 'เก็บขยะริมน้ำ', 'จัดสถานที่', '20 พ.ย. 2569', 3, 'walk-in']);
+    expect([byId['65000002'][1], byId['65000002'][2], ...byId['65000002'].slice(5, 10)]).toEqual(['65000002', 'สมหญิง รักเรียน', 'เก็บขยะริมน้ำ', 'จัดสถานที่', '20 พ.ย. 2569', 3, 'walk-in']);
     // The activity repeats on every row.
-    expect(rows.slice(1).map((r) => r.slice(3, 6))).toEqual(Array(3).fill(['เก็บขยะริมน้ำ', 'จัดสถานที่', '20 พ.ย. 2569']));
+    expect(rows.slice(1).map((r) => r.slice(5, 8))).toEqual(Array(3).fill(['เก็บขยะริมน้ำ', 'จัดสถานที่', '20 พ.ย. 2569']));
     // The confirm time always carries the full date.
-    expect(byId['65000002'][8]).toMatch(/^\d{1,2} \S+ \d{4} \d{2}:\d{2} น\.$/);
-    expect(byId['65000002'][9]).toBe('ผู้ดูแล ก');
+    expect(byId['65000002'][10]).toMatch(/^\d{1,2} \S+ \d{4} \d{2}:\d{2} น\.$/);
+    expect(byId['65000002'][11]).toBe('ผู้ดูแล ก');
     expect(byId['65000001'][2]).toBe("'=SUM(1)");
     // The roster is still open: not scanned yet, no hours, not "ไม่มา" (R15).
     expect(byId['65000003'][2]).toBe('ปวีณา มาสาย');
-    expect(byId['65000003'].slice(6, 8)).toEqual([undefined, 'ยังไม่สแกน']);
+    expect(byId['65000003'].slice(8, 10)).toEqual([undefined, 'ยังไม่สแกน']);
     // Oldest hours first, as on the student's sheet, then who has none (R16).
     expect(rows.slice(1).map((r) => r[1])).toEqual(['65000002', '65000001', '65000003']);
 
@@ -1040,10 +1040,10 @@ describe('Excel files', () => {
     await dbOf(app).query('UPDATE activities SET closed_at = now() WHERE id = $1', [id]);
     const rows = await read((await download(api(app, owner).get(`/activities/${id}/export?kind=sup`).expect(200))).body);
     const noShow = rows.slice(1).find((r) => r[1] === '65000003')!;
-    expect(noShow.slice(6, 8)).toEqual([0, 'ไม่มา']);
+    expect(noShow.slice(8, 10)).toEqual([0, 'ไม่มา']);
   });
 
-  it('the centre file has 8 columns, earners only, by id', async () => {
+  it('the centre file has 10 columns, earners only, by id', async () => {
     const res = await download(api(app, admin).get(`/activities/${id}/export?kind=admin`).expect(200));
     expect(decodeURIComponent(res.headers['content-disposition'])).toContain("filename*=UTF-8''บันทึกชั่วโมง 20-11-2569 เก็บขยะริมน้ำ.xlsx");
     // A plain table, with its header kept in view and filters on (R22).
@@ -1053,8 +1053,8 @@ describe('Excel files', () => {
     expect(wb.worksheets[0].autoFilter).toBeTruthy();
     const rows = await read(res.body);
     expect(rows).toEqual([
-      ['รหัสนิสิต', 'ชื่อ', 'กิจกรรม', 'หน่วยงาน', 'หมวด', 'วันที่', 'ชั่วโมง', 'สถานะ'],
-      ['65000002', 'สมหญิง รักเรียน', 'เก็บขยะริมน้ำ', 'หน่วยงาน A', 'จัดสถานที่', '20 พ.ย. 2569', 3, 'ได้ชั่วโมง'],
+      ['รหัสนิสิต', 'ชื่อ', 'เบอร์โทร', 'คณะ', 'กิจกรรม', 'หน่วยงาน', 'หมวด', 'วันที่', 'ชั่วโมง', 'สถานะ'],
+      ['65000002', 'สมหญิง รักเรียน', '', '', 'เก็บขยะริมน้ำ', 'หน่วยงาน A', 'จัดสถานที่', '20 พ.ย. 2569', 3, 'ได้ชั่วโมง'],
     ]);
   });
 
