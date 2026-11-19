@@ -5,9 +5,10 @@ import { assertCanEdit, assertOwner, CurrentUser, isOwner, isStudent, Roles, Stu
 import { AppConfig } from '../../common/config';
 import { ACTIVITY_RULE_COLUMNS, DbService, lockActivity, Row } from '../../common/db.service';
 import { ApiError, forbidden, notFound, validation } from '../../common/errors';
-import { Bool, Int, Name, Str } from '../../common/fields';
+import { AnswerMap, checkAnswers } from '../../common/questions';
+import { Bool, Int, MAX_TIME_MS, Name, Str } from '../../common/fields';
 import { fmtHours } from '../../common/format';
-import { toCredit, toCreditForPeer, toOwnCredit, toRegistration } from '../../common/mappers';
+import { toCredit, toCreditForPeer, toOwnCredit, toRegistration, toRegistrationWithForm } from '../../common/mappers';
 import { hoursChangedNotice, writeCredit } from '../claims/credit-writer';
 import { bottleHours, personHoursCap } from '../claims/rules';
 import { RealtimeService, rooms } from '../realtime/realtime';
@@ -26,6 +27,15 @@ function assertOpenForRegistration(activity: Row) {
   if (activity.hidden) throw new ApiError(409, 'REG_HIDDEN', 'กิจกรรมนี้ถูกซ่อนอยู่ ลงทะเบียนไม่ได้');
   if (now > (activity.end_at as Date).getTime()) throw new ApiError(409, 'REG_ENDED', 'กิจกรรมนี้จบแล้ว ลงทะเบียนไม่ได้');
   if (activity.opens_at && now < (activity.opens_at as Date).getTime()) throw new ApiError(409, 'REG_NOT_OPEN', 'ยังไม่ถึงเวลาเปิดรับสมัคร');
+}
+
+/** The registration form. All of it is optional here so an older app, which sends nothing, still registers. */
+export class RegisterDto {
+  @Str({ optional: true, max: 20, matches: /^[0-9\- ]*$/ }) phone?: string | null;
+  @Str({ optional: true, max: 80 }) faculty?: string | null;
+  /** When the student ticked the PDPA consent, in ms. */
+  @Int({ optional: true, min: 0, max: MAX_TIME_MS }) consentAt?: number | null;
+  @AnswerMap() answers?: Record<string, string> | null;
 }
 
 export class AddCreditDto {
@@ -79,7 +89,7 @@ export class RosterService {
 
   // Registration ----------------------------------------------------------------------------------
 
-  async register(user: StudentUser, activityId: string) {
+  async register(user: StudentUser, activityId: string, dto: RegisterDto = {}) {
     const result = await this.db.tx(async (c) => {
       const activity = await lockActivity(c, activityId);
       if (!activity) throw notFound(NO_ACTIVITY);
@@ -88,11 +98,14 @@ export class RosterService {
       assertOpenForRegistration(activity);
       if (reg.rows[0]?.late) throw new ApiError(409, 'REG_LATE_CANCELLED', 'ยกเลิกหลังกำหนดไปแล้ว ลงทะเบียนกิจกรรมนี้ซ้ำไม่ได้');
       if ((await countStrikes(c, user.sub, this.config.tzDisplay)) >= STRIKE_LIMIT) throw new ApiError(409, 'REG_NO_CREDITS', 'สิทธิ์ยกเลิกหมดแล้ว ลงทะเบียนกิจกรรมใหม่ได้ในภาคหน้า');
+      const questions = (await c.query('SELECT questions FROM activities WHERE id = $1', [activityId])).rows[0].questions ?? [];
+      const answers = checkAnswers(questions, dto.answers);
       if (activity.cap_limit && activity.reg_count >= activity.capacity) return 'full' as const;
       await c.query(
-        `INSERT INTO registrations (activity_id, student_id, name) VALUES ($1, $2, $3)
-         ON CONFLICT (activity_id, student_id) DO UPDATE SET name = excluded.name, at = now(), cancelled_at = null, walk_in = false`,
-        [activityId, user.sub, user.name],
+        `INSERT INTO registrations (activity_id, student_id, name, phone, faculty, consent_at, answers) VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (activity_id, student_id) DO UPDATE SET name = excluded.name, at = now(), cancelled_at = null, walk_in = false,
+           phone = excluded.phone, faculty = excluded.faculty, consent_at = excluded.consent_at, answers = excluded.answers`,
+        [activityId, user.sub, user.name, dto.phone || null, dto.faculty || null, dto.consentAt == null ? null : new Date(dto.consentAt), JSON.stringify(answers)],
       );
       await c.query('UPDATE activities SET reg_count = reg_count + 1 WHERE id = $1', [activityId]);
       await c.query(`INSERT INTO notices (student_id, kind, title, body, activity_id) VALUES ($1, 'registered', 'ลงทะเบียนสำเร็จ', $2, $3)`, [user.sub, activity.title, activityId]);
@@ -147,14 +160,15 @@ export class RosterService {
     assertOwner(user, await this.readActivity(activityId));
     const { rows } = await this.db.query('SELECT * FROM registrations WHERE activity_id = $1 ORDER BY at DESC', [activityId]);
     const flags = await idFlags(this.db, rows.map((r) => r.student_id));
-    return rows.map((r) => (flags.has(r.student_id) ? { ...toRegistration(r), idFlag: flags.get(r.student_id) } : toRegistration(r)));
+    return rows.map((r) => (flags.has(r.student_id) ? { ...toRegistrationWithForm(r), idFlag: flags.get(r.student_id) } : toRegistrationWithForm(r)));
   }
 
   async registration(user: User, activityId: string, studentId: string) {
     await this.assertSelfOrOwner(user, activityId, studentId);
     const row = await this.db.one('SELECT * FROM registrations WHERE activity_id = $1 AND student_id = $2', [activityId, studentId]);
     if (!row) throw notFound('ไม่พบการลงทะเบียน');
-    return toRegistration(row);
+    // The form answers go to supervisors only; a student reading their own row does not get them back.
+    return isStudent(user) ? toRegistration(row) : toRegistrationWithForm(row);
   }
 
   /** Deletes the registration and its credit, if any. A cancelled registration was already out of reg_count, and a walk-in was never in it. */
@@ -360,9 +374,9 @@ export class RosterController {
   @Post('registrations')
   @HttpCode(200)
   @Roles('student')
-  @ApiOperation({ summary: 'ลงทะเบียน คืน result: ok, full หรือ already; 409 ถ้ากิจกรรมถูกซ่อน จบแล้ว ยังไม่เปิดรับ เคยยกเลิกช้า หรือสิทธิ์หมด' })
-  register(@CurrentUser() user: StudentUser, @Param('id') id: string) {
-    return this.roster.register(user, id);
+  @ApiOperation({ summary: 'ลงทะเบียน คืน result: ok, full หรือ already; ส่ง phone, faculty, consentAt, answers ได้ (ไม่บังคับ; ข้อ required ของกิจกรรมต้องตอบ ไม่ครบได้ 400 VALIDATION); 409 ถ้ากิจกรรมถูกซ่อน จบแล้ว ยังไม่เปิดรับ เคยยกเลิกช้า หรือสิทธิ์หมด' })
+  register(@CurrentUser() user: StudentUser, @Param('id') id: string, @Body() dto: RegisterDto) {
+    return this.roster.register(user, id, dto ?? {});
   }
 
   @Delete('registrations/me')
@@ -374,14 +388,14 @@ export class RosterController {
 
   @Get('registrations')
   @Roles('sup')
-  @ApiOperation({ summary: 'รายชื่อลงทะเบียน ใหม่สุดก่อน' })
+  @ApiOperation({ summary: 'รายชื่อลงทะเบียน ใหม่สุดก่อน พร้อมข้อมูลฟอร์ม (phone, faculty, consentAt, answers) เฉพาะ owner/admin' })
   registrations(@CurrentUser() user: SupUser, @Param('id') id: string) {
     return this.roster.registrations(user, id);
   }
 
   @Get('registrations/:studentId')
   @Roles('student', 'sup')
-  @ApiOperation({ summary: 'การลงทะเบียนรายคน: ตัวเอง หรือ owner/admin' })
+  @ApiOperation({ summary: 'การลงทะเบียนรายคน: ตัวเอง หรือ owner/admin; ข้อมูลฟอร์มส่งให้ owner/admin เท่านั้น' })
   registration(@CurrentUser() user: User, @Param('id') id: string, @Param('studentId') studentId: string) {
     return this.roster.registration(user, id, studentId);
   }

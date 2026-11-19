@@ -9,6 +9,7 @@ import { assertNotNull, assertRequired, Bool, Int, MAX_TIME_MS, Name, Nested, Nu
 import { fmtHours, newId } from '../../common/format';
 import { toActivity } from '../../common/mappers';
 import { POSTER_CACHE, POSTER_COLUMN, posterImage, posterToStore } from '../../common/poster';
+import { cleanQuestions, QuestionDto, QuestionList } from '../../common/questions';
 import { HoursRule, lowersHours, raisedHours } from '../claims/rules';
 import { RealtimeService, rooms } from '../realtime/realtime';
 
@@ -45,18 +46,20 @@ export class ActivityDto {
   @Bool({ optional: true }) hidden?: boolean | null;
   @Bool({ optional: true }) hideUntilOpen?: boolean | null;
   @Str({ optional: true, max: 100 }) templateId?: string | null;
+  /** The registration form: up to 10 questions. Send [] to clear; null is refused. */
+  @QuestionList({ optional: true }) questions?: QuestionDto[];
   /** PATCH only, with more hours: also lift everyone who has exactly what the old rule gave. Hours set by hand stay. */
   @Bool({ optional: true }) raiseCredited?: boolean;
 }
 
 const REQUIRED = ['title', 'categoryKey', 'start', 'end', 'hours', 'capLimit', 'capacity', 'walkIn', 'qrMode', 'locMode', 'radius', 'qrInterval', 'supervisor', 'chatEnabled'] as const;
 /** Fields a PATCH cannot set to null because the column has no empty state. */
-const NOT_CLEARABLE = [...REQUIRED, 'poster', 'description', 'place'] as const;
+const NOT_CLEARABLE = [...REQUIRED, 'poster', 'description', 'place', 'questions'] as const;
 
 /** Every column toActivity reads, with the poster as a URL. Reading the images here would defeat the point. */
 const ACTIVITY_COLUMNS = `id, title, category_key, org, org_code, description, place, lat, lng, start_at, end_at, hours, cap_limit, capacity, walk_in,
   qr_mode, loc_mode, radius, qr_interval, supervisor_name, supervisor_phone, chat_enabled, open_chat_url, opens_at, cancel_days, closed_at, submitted_at,
-  recorded_at, hidden, hide_until_open, created_at, reg_count, credit_count, items_per_hour, template_id, ${POSTER_COLUMN}`;
+  recorded_at, hidden, hide_until_open, created_at, reg_count, credit_count, items_per_hour, template_id, questions, ${POSTER_COLUMN}`;
 
 const date = (v: number | null | undefined) => (v === null || v === undefined ? null : new Date(v));
 
@@ -88,6 +91,7 @@ const COLUMNS: Record<string, (v: any) => Record<string, unknown>> = {
   hidden: (v) => ({ hidden: v }),
   hideUntilOpen: (v) => ({ hide_until_open: v }),
   templateId: (v) => ({ template_id: v }),
+  questions: (v) => ({ questions: JSON.stringify(cleanQuestions(v)) }),
 };
 
 const LOWER_MESSAGE: Record<'hours' | 'itemsPerHour', string> = {

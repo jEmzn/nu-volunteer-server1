@@ -209,7 +209,7 @@ describe('templates', () => {
 
   it('fill missing settings with the defaults', async () => {
     const t = (await api(app, await sup(app)).post('/templates', { title: 'ก', hours: 1, settings: {} }).expect(201)).body;
-    expect(t.settings).toEqual({ capLimit: false, capacity: 30, walkIn: false, qrMode: 'dynamic', qrInterval: 10, locMode: 'on', radius: 150 });
+    expect(t.settings).toEqual({ capLimit: false, capacity: 30, walkIn: false, qrMode: 'dynamic', qrInterval: 10, locMode: 'on', radius: 150, questions: [] });
     expect(t).toMatchObject({ poster: '', description: '' });
   });
 
