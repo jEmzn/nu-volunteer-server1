@@ -62,6 +62,7 @@
 | `credit_count` | `int4` |  |
 | `items_per_hour` | `int4` |  Nullable |
 | `template_id` | `text` |  Nullable |
+| `questions` | `jsonb` | default `'[]'` |
 
 ## Table `registrations`
 
@@ -77,6 +78,10 @@
 | `cancelled_at` | `timestamptz` |  Nullable |
 | `late` | `bool` |  |
 | `waived` | `bool` |  |
+| `phone` | `text` |  Nullable |
+| `faculty` | `text` |  Nullable |
+| `consent_at` | `timestamptz` |  Nullable |
+| `answers` | `jsonb` | default `'{}'` |
 
 ## Table `credits`
 

@@ -13,9 +13,10 @@ export const REQUIRED_COLUMNS: Record<string, readonly string[]> = {
     'id', 'title', 'category_key', 'org', 'org_code', 'poster', 'description', 'place', 'lat', 'lng', 'start_at', 'end_at', 'hours', 'cap_limit', 'capacity',
     'walk_in', 'qr_mode', 'loc_mode', 'radius', 'qr_interval', 'supervisor_name', 'supervisor_phone', 'chat_enabled', 'open_chat_url', 'opens_at', 'cancel_days',
     'closed_at', 'submitted_at', 'recorded_at', 'hidden', 'hide_until_open', 'created_at', 'reg_count', 'credit_count', 'items_per_hour', 'template_id',
+    'questions',
   ],
   templates: ['id', 'org_code', 'title', 'poster', 'description', 'hours', 'settings', 'created_by', 'created_at'],
-  registrations: ['activity_id', 'student_id', 'name', 'at', 'walk_in', 'cancelled_at', 'late', 'waived'],
+  registrations: ['activity_id', 'student_id', 'name', 'at', 'walk_in', 'cancelled_at', 'late', 'waived', 'phone', 'faculty', 'consent_at', 'answers'],
   credits: [
     'activity_id', 'student_id', 'name', 'hours', 'full_hours', 'at', 'method', 'distance', 'accuracy', 'flags', 'device_id', 'ref', 'edited_by', 'edited_at',
     'reason', 'reason_shared', 'items',

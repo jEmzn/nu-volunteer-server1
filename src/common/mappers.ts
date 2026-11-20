@@ -59,6 +59,7 @@ export const toActivity = (r: Row, viewer: Viewer) =>
     createdAt: ms(r.created_at) ?? 0,
     regCount: r.reg_count,
     creditCount: r.credit_count,
+    questions: r.questions ?? [],
   });
 
 export const toRegistration = (r: Row) =>
@@ -71,6 +72,10 @@ export const toRegistration = (r: Row) =>
     late: r.late || undefined,
     waived: r.waived || undefined,
   });
+
+/** The student's form answers: for the organisation's supervisors and the centre admin only, never for a student or the public. */
+export const toRegistrationWithForm = (r: Row) =>
+  defined({ ...toRegistration(r), phone: opt(r.phone), faculty: opt(r.faculty), consentAt: ms(r.consent_at), answers: r.answers ?? {} });
 
 export const toMyRegistration = (r: Row) => ({ ...toRegistration(r), activityId: r.activity_id });
 
@@ -163,6 +168,7 @@ export const toTemplateSettings = (s: Row | null | undefined) => ({
   qrInterval: Number(s?.qrInterval) > 0 ? Number(s?.qrInterval) : 10,
   locMode: s?.locMode === 'off' ? 'off' : 'on',
   radius: Number(s?.radius) > 0 ? Number(s?.radius) : 150,
+  questions: Array.isArray(s?.questions) ? s.questions : [],
 });
 
 export const toTemplate = (r: Row) => ({

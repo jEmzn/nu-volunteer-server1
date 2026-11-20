@@ -1,14 +1,41 @@
 import { thDate, thTime, zonedParts } from '../../common/format';
 import type { Row } from '../../common/db.service';
+import type { Question } from '../../common/questions';
 import { baseOf, type IdFlag } from '../ids/ids';
 
 /** The rows of both Excel files as pure data, so their columns and values can be tested without Excel. */
 
-/** A flat table, header in row 1: the activity's title, category and date repeat on every row, like the centre file. */
-export const SUP_COLUMNS = ['ลำดับ', 'รหัสนิสิต', 'ชื่อ', 'กิจกรรม', 'หมวด', 'วันที่', 'ชั่วโมง', 'สถานะ', 'เวลายืนยัน', 'ยืนยันโดย', 'หมายเหตุ'] as const;
-export const SUP_WIDTHS = [7, 12, 28, 40, 16, 14, 9, 12, 20, 18, 40];
-export const ADMIN_COLUMNS = ['รหัสนิสิต', 'ชื่อ', 'กิจกรรม', 'หน่วยงาน', 'หมวด', 'วันที่', 'ชั่วโมง', 'สถานะ'] as const;
-export const ADMIN_WIDTHS = [12, 28, 40, 30, 16, 14, 9, 14];
+/**
+ * A flat table, header in row 1: the activity's title, category and date repeat on every row, like the centre file.
+ * The registration form follows the name: phone, faculty, then one column per question of the activity (its label as the head).
+ */
+export const SUP_COLUMNS = ['ลำดับ', 'รหัสนิสิต', 'ชื่อ', 'เบอร์โทร', 'คณะ', 'กิจกรรม', 'หมวด', 'วันที่', 'ชั่วโมง', 'สถานะ', 'เวลายืนยัน', 'ยืนยันโดย', 'หมายเหตุ'] as const;
+export const SUP_WIDTHS = [7, 12, 28, 14, 24, 40, 16, 14, 9, 12, 20, 18, 40];
+export const ADMIN_COLUMNS = ['รหัสนิสิต', 'ชื่อ', 'เบอร์โทร', 'คณะ', 'กิจกรรม', 'หน่วยงาน', 'หมวด', 'วันที่', 'ชั่วโมง', 'สถานะ'] as const;
+export const ADMIN_WIDTHS = [12, 28, 14, 24, 40, 30, 16, 14, 9, 14];
+
+type Asked = Pick<Question, 'id' | 'label'>;
+const QUESTION_WIDTH = 24;
+/** Columns before the question columns: 3 in the supervisor file (no., id, name), 2 in the centre file, then phone and faculty. */
+const SUP_FORM_AT = 3;
+const ADMIN_FORM_AT = 2;
+const FORM_FIXED = 2;
+
+const withQuestions = <T>(fixed: readonly T[], at: number, questions: Asked[], make: (q: Asked) => T): T[] => [...fixed.slice(0, at + FORM_FIXED), ...questions.map(make), ...fixed.slice(at + FORM_FIXED)];
+/** The questions of an activity row (the column is jsonb, `[]` for none). */
+export const questionsOf = (activity: Row): Question[] => (Array.isArray(activity.questions) ? activity.questions : []);
+
+/** A question label is typed by a supervisor, so it goes through safeCell like any cell. */
+export const supColumns = (questions: Asked[]) => withQuestions<string>(SUP_COLUMNS, SUP_FORM_AT, questions, (q) => safeCell(q.label));
+export const supWidths = (questions: Asked[]) => withQuestions<number>(SUP_WIDTHS, SUP_FORM_AT, questions, () => QUESTION_WIDTH);
+export const adminColumns = (questions: Asked[]) => withQuestions<string>(ADMIN_COLUMNS, ADMIN_FORM_AT, questions, (q) => safeCell(q.label));
+export const adminWidths = (questions: Asked[]) => withQuestions<number>(ADMIN_WIDTHS, ADMIN_FORM_AT, questions, () => QUESTION_WIDTH);
+
+/** Phone, faculty and the answer to each question of the activity. Blank without a form; answers to removed questions are not listed. */
+function formCells(questions: Question[], reg: Row | undefined): string[] {
+  const answers: Record<string, unknown> = reg?.answers ?? {};
+  return [reg?.phone ?? '', reg?.faculty ?? '', ...questions.map((q) => (Object.hasOwn(answers, q.id) && typeof answers[q.id] === 'string' ? (answers[q.id] as string) : ''))].map(safeCell);
+}
 
 /** Two names on one id (item 23): the row must not go into the university system until the admin checked it. */
 const ID_STATUS: Record<IdFlag, string> = { idconflict: 'รอตรวจรหัส', idpending: 'รอรหัสที่ถูก' };
@@ -65,6 +92,7 @@ export function supRows(activity: Row, regs: Row[], credits: Row[], tz: string, 
 
   const last = Number.MAX_SAFE_INTEGER;
   const sorted = [...people.values()].sort((a, b) => (a.credit ? time(a.credit.at) : last) - (b.credit ? time(b.credit.at) : last) || thai.compare(a.name, b.name));
+  const questions = questionsOf(activity);
   return sorted.map((p, i) => {
     const c = p.credit;
     const flags: string[] = c?.flags ?? [];
@@ -80,6 +108,7 @@ export function supRows(activity: Row, regs: Row[], credits: Row[], tz: string, 
       i + 1,
       baseOf(p.id),
       p.name,
+      ...formCells(questions, p.reg),
       activity.title,
       categoryLabel(activity.category_key),
       thDate(time(activity.start_at), tz),
@@ -93,14 +122,19 @@ export function supRows(activity: Row, regs: Row[], credits: Row[], tz: string, 
   });
 }
 
-/** One row per person who earned hours, by student id. No-shows and people left at 0 hours are not listed. */
-export function adminRows(activity: Row, credits: Row[], tz: string, idFlags = new Map<string, IdFlag>()): (string | number)[][] {
+/**
+ * One row per person who earned hours, by student id. No-shows and people left at 0 hours are not listed.
+ * `regs` only supplies the registration form; someone without a registration (walk-in) has blank form cells.
+ */
+export function adminRows(activity: Row, credits: Row[], tz: string, idFlags = new Map<string, IdFlag>(), regs: Row[] = []): (string | number)[][] {
+  const questions = questionsOf(activity);
+  const regOf = new Map(regs.filter((r) => !r.cancelled_at).map((r) => [r.student_id, r]));
   return credits
     .filter((c) => Number(c.hours) > 0)
     .sort((a, b) => a.student_id.localeCompare(b.student_id))
     .map((c) => {
       const idFlag = idFlags.get(c.student_id);
-      const cells = [baseOf(c.student_id), c.name, activity.title, activity.org, categoryLabel(activity.category_key), thDate(activity.start_at.getTime(), tz), Number(c.hours)];
+      const cells = [baseOf(c.student_id), c.name, ...formCells(questions, regOf.get(c.student_id)), activity.title, activity.org, categoryLabel(activity.category_key), thDate(activity.start_at.getTime(), tz), Number(c.hours)];
       return [...cells, idFlag ? ID_STATUS[idFlag] : 'ได้ชั่วโมง'].map(safeCell);
     });
 }

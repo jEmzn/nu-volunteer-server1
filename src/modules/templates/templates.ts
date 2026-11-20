@@ -7,6 +7,7 @@ import { forbidden, notFound } from '../../common/errors';
 import { assertNotNull, assertRequired, Bool, Int, Nested, OneOf, Str } from '../../common/fields';
 import { newId } from '../../common/format';
 import { toTemplate } from '../../common/mappers';
+import { cleanQuestions, QuestionDto, QuestionList } from '../../common/questions';
 import { POSTER_CACHE, posterImage, posterToStore, TEMPLATE_POSTER_COLUMN, templatePosterId } from '../../common/poster';
 
 export class TemplateSettingsDto {
@@ -17,7 +18,11 @@ export class TemplateSettingsDto {
   @OneOf([10, 15], { optional: true }) qrInterval?: number;
   @OneOf(['on', 'off'], { optional: true }) locMode?: string;
   @Int({ optional: true, min: 1, max: 100000 }) radius?: number;
+  @QuestionList({ optional: true }) questions?: QuestionDto[] | null;
 }
+
+/** Settings as stored: the questions without keys the form does not use. */
+const storedSettings = (s: TemplateSettingsDto | undefined) => (s && s.questions !== undefined ? { ...s, questions: cleanQuestions(s.questions) } : s);
 
 export class TemplateDto {
   @Str({ optional: true, min: 1, max: 200 }) title?: string;
@@ -56,7 +61,7 @@ export class TemplatesService {
       dto.poster ?? '',
       dto.description ?? '',
       dto.hours,
-      JSON.stringify(dto.settings ?? {}),
+      JSON.stringify(storedSettings(dto.settings) ?? {}),
       user.supName,
     ]);
     return toTemplate(row!);
@@ -78,7 +83,7 @@ export class TemplatesService {
       `UPDATE templates SET title = COALESCE($2, title), poster = COALESCE($3, poster), description = COALESCE($4, description),
          hours = COALESCE($5, hours), settings = COALESCE($6::jsonb, settings)
        WHERE id = $1 RETURNING *`,
-      [id, dto.title ?? null, dto.poster ?? null, dto.description ?? null, dto.hours ?? null, dto.settings ? JSON.stringify(dto.settings) : null],
+      [id, dto.title ?? null, dto.poster ?? null, dto.description ?? null, dto.hours ?? null, dto.settings ? JSON.stringify(storedSettings(dto.settings)) : null],
     );
     return toTemplate(row!);
   }

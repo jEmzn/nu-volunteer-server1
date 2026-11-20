@@ -276,9 +276,24 @@ error: `QR_INVALID`, `QR_EXPIRED`, `QR_EARLY`, `QR_LATE`, `NOT_REGISTERED`, `ROS
 
 ตำแหน่งไม่เคยบล็อก แค่ติด flag การเก็บสแกนออฟไลน์ควรลองใหม่เฉพาะเมื่อเน็ตล่มหรือได้ 5xx/429 ถ้าได้ 4xx อื่นให้เลิกส่งแล้วแจ้งผู้ใช้
 
+### คำถามของฟอร์มลงทะเบียน (`questions`)
+
+`questions` อยู่ใน `Activity` (ส่งกลับใน `GET /activities` และ `GET /activities/:id` ให้ทุกคน, ไม่มีคำถามเป็น `[]`) และใน `settings` ของ Template รับใน `POST/PATCH /activities` และ `POST/PATCH /templates` PATCH ส่งทั้งรายการแทนของเดิม ส่ง `[]` เพื่อล้าง ส่ง `null` กับกิจกรรมได้ 400
+
+```json
+"questions": [
+  { "id": "q1", "label": "ชั้นปี", "type": "choice", "options": ["ปี 1", "ปี 2", "ปี 3"], "required": true },
+  { "id": "q2", "label": "โรคประจำตัว", "type": "text", "required": false }
+]
+```
+
+ไม่เกิน 10 ข้อ `id` ไม่ซ้ำ 1 ถึง 40 ตัวอักษร `label` 1 ถึง 120 `type` เป็น `text` หรือ `choice` `required` บังคับส่ง ข้อ `choice` ต้องมี `options` 2 ถึง 10 ตัว ตัวละ 1 ถึง 60 ข้อ `text` ถ้าส่ง `options` มาจะถูกทิ้ง ผิดกฎได้ 400 `VALIDATION` กับ `fields` เช่น `questions.0.label`, `questions`
+
 ### ลงทะเบียน
 
 **`POST /activities/:id/registrations`** (นิสิต) → `{ "result": "ok" | "full" | "already" }`
+
+body ไม่บังคับทั้งหมด (แอปเก่าไม่ส่งอะไรก็ลงทะเบียนได้): `{ "phone"?: "081-234 5678", "faculty"?: "คณะวิศวกรรมศาสตร์", "consentAt"?: 1731900000000, "answers"?: { "<questionId>": "คำตอบ" } }` `phone` ตัดขีด เว้นวรรค วงเล็บออกก่อน แล้วต้องเป็นตัวเลข 9-10 หลักขึ้นต้นด้วย 0 เก็บและคืนเป็นตัวเลขล้วน (`"081-234 5678"` เก็บเป็น `"0812345678"`), `faculty` ต้องตรงกับหนึ่งในรายการคณะ (`src/common/contact.ts` ชุดเดียวกับ `src/lib/faculties.ts` ของเว็บ รวม `"อื่น ๆ"` ไม่มีช่องพิมพ์เอง เว้นวรรคหัวท้ายถูกตัด), `phone` หรือ `faculty` เป็น `""` หรือ `null` ถือว่าไม่ส่ง, `consentAt` บอกว่ากดยินยอม PDPA แล้ว ส่งตัวเลขใดก็ได้ (ms) server ไม่ใช้ค่านี้ เก็บเวลาของ server ตอนบันทึกแทน ไม่ส่งหรือ `null` ยังลงทะเบียนได้และไม่มีเวลายินยอม (แถวที่บันทึกก่อน 20 พ.ย. 2569 อาจมีเบอร์มีขีด คณะนอกรายการ หรือเวลาจากเครื่องนิสิต ไม่ได้แก้ย้อนหลัง), คำตอบแต่ละข้อไม่เกิน 500 ผิดรูปแบบได้ 400 `VALIDATION` กับ `fields` เช่น `["phone"]` เทียบกับ `questions` ของกิจกรรม: ข้อ `required` ต้องตอบ (ว่างหรือเว้นวรรคล้วนถือว่าไม่ตอบ) ได้ 400 `fields: ["answers.<questionId>"]`, คำตอบข้อ `choice` ต้องตรงกับหนึ่งใน `options` (ไม่ตรงได้ 400 เช่นกัน), questionId ที่กิจกรรมไม่มีถูกทิ้ง, คำตอบว่างของข้อไม่บังคับไม่ถูกเก็บ ตรวจหลังเงื่อนไข 409 ทั้งหมดและก่อนตรวจที่นั่งเต็ม ลงทะเบียนอยู่แล้ว (`already`) ไม่แก้คำตอบเดิม ลงทะเบียนใหม่หลังยกเลิกใช้คำตอบชุดใหม่แทน
 
 ตรวจตามลำดับ: ลงทะเบียนอยู่แล้วได้ `already` เสมอ จากนั้นกิจกรรมที่ `hidden` ได้ 409 `REG_HIDDEN`, เลย `end` ได้ 409 `REG_ENDED`, ยังไม่ถึง `opensAt` ได้ 409 `REG_NOT_OPEN`, เคยยกเลิกกิจกรรมนี้หลังกำหนดได้ 409 `REG_LATE_CANCELLED`, สิทธิ์หมดได้ 409 `REG_NO_CREDITS` แล้วจึงตรวจที่นั่งเต็ม กฎนี้ไม่ใช้กับการเพิ่มคนโดยผู้ดูแลและ walk-in จากการสแกน
 
@@ -298,6 +313,8 @@ error: `QR_INVALID`, `QR_EXPIRED`, `QR_EARLY`, `QR_LATE`, `NOT_REGISTERED`, `ROS
 **`GET /activities/:id/registrations`** (owner/admin) → `Registration[]` ใหม่สุดก่อน
 
 **`GET /activities/:id/registrations/:studentId`** (self, owner/admin) → `Registration`
+
+ข้อมูลจากฟอร์ม `phone`, `faculty`, `consentAt`, `answers` เป็นข้อมูลส่วนตัว มีเฉพาะ response ของ owner/admin สองข้อบนนี้ (`phone`, `faculty`, `consentAt` ไม่มี key ถ้าไม่เคยส่ง, `answers` เป็น `{}` ถ้าไม่มี) นิสิตไม่ได้คืนแม้เป็นของตัวเอง (`GET .../registrations/:studentId` ของตัวเอง และ `GET /students/me/registrations`) และไม่มีใน endpoint สาธารณะ, PATCH waived ส่วนไฟล์ Excel มีข้อมูลฟอร์มให้ owner/admin ตามสิทธิ์ของ export (ดูหัวข้อ export)
 
 **`DELETE /activities/:id/registrations/:studentId`** (owner/admin, กฎล็อก) ลบพร้อมชั่วโมง → `{ "ok": true }`
 
@@ -341,6 +358,11 @@ error: `QR_INVALID`, `QR_EXPIRED`, `QR_EARLY`, `QR_LATE`, `NOT_REGISTERED`, `ROS
 
 ทั้งสองไฟล์แสดงรหัส 8 หลักโดยตัด `#n` ออก แถวที่มีชั่วโมงของรหัสซ้อนมีสถานะ `รอตรวจรหัส` (หรือ `รอรหัสที่ถูก`) ไฟล์ admin มี 8 คอลัมน์ คอลัมน์สุดท้ายคือ `สถานะ` (`ได้ชั่วโมง` หรือสถานะรหัสซ้อน) ตั้งแต่ 18 พ.ย. 2569
 
+ข้อมูลฟอร์มลงทะเบียนอยู่ในทั้งสองไฟล์ ต่อจากคอลัมน์ `ชื่อ` ก่อนคอลัมน์ `กิจกรรม` คือ `เบอร์โทร`, `คณะ` แล้วคอลัมน์ละคำถามของกิจกรรมตามลำดับ `questions` (หัวคอลัมน์คือ `label` ของคำถาม) คนที่ไม่มีข้อมูล (walk-in, ลงทะเบียนจากแอปเก่า, ยกเลิกแล้ว) เว้นว่าง คำตอบของคำถามที่ถูกลบจากกิจกรรมแล้วไม่ถูกใส่ จำนวนคอลัมน์จึงเป็น 13 (sup) และ 10 (admin) บวกจำนวนคำถาม ผู้ที่ดาวน์โหลดได้เหมือนเดิม (`kind=sup` owner/admin, `kind=admin` admin) ข้อความขึ้นต้นด้วย `=`, `+`, `-`, `@` ได้เครื่องหมาย `'` นำหน้าเหมือนเซลล์อื่น
+
+- `kind=sup`: `ลำดับ`, `รหัสนิสิต`, `ชื่อ`, `เบอร์โทร`, `คณะ`, (คำถาม 1..n), `กิจกรรม`, `หมวด`, `วันที่`, `ชั่วโมง`, `สถานะ`, `เวลายืนยัน`, `ยืนยันโดย`, `หมายเหตุ`
+- `kind=admin`: `รหัสนิสิต`, `ชื่อ`, `เบอร์โทร`, `คณะ`, (คำถาม 1..n), `กิจกรรม`, `หน่วยงาน`, `หมวด`, `วันที่`, `ชั่วโมง`, `สถานะ`
+
 ### รหัสซ้อน (admin, ข้อ 23)
 
 **`GET /id-conflicts`** → รหัสที่มีบัญชีซ้อนที่ยังไม่ตรวจ ใหม่สุดก่อน
@@ -383,7 +405,7 @@ error: `QR_INVALID`, `QR_EXPIRED`, `QR_EARLY`, `QR_LATE`, `NOT_REGISTERED`, `ROS
 | `PATCH /templates/:id` | field เดียวกัน ไม่บังคับทุกตัว | `Template` |
 | `DELETE /templates/:id` | | `{ "ok": true }` |
 
-`settings` ที่ขาดใช้ค่าเริ่มต้น: capacity 30, qrMode dynamic, qrInterval 10, locMode on, radius 150
+`settings` ที่ขาดใช้ค่าเริ่มต้น: capacity 30, qrMode dynamic, qrInterval 10, locMode on, radius 150, questions `[]` (ดู `questions` ด้านล่าง)
 
 `poster` ของเทมเพลต (VB-27): ไม่ส่ง `?posters=url` ได้ data URL แบบเดิม (สำหรับเว็บรุ่นก่อน) ส่งมาแล้วรูปที่อัปโหลดเป็น `/templates/:id/poster?v=<เวอร์ชัน>` ให้เติมที่อยู่ของ API ด้านหน้า ส่ง URL นี้ใน POST หรือ PATCH ของกิจกรรมหรือเทมเพลตได้ server คัดลอกรูปให้ ส่ง URL ของเทมเพลตตัวเองกลับมาใน PATCH ถือว่าไม่เปลี่ยนรูป
 

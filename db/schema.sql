@@ -52,7 +52,9 @@ create table activities (
   reg_count integer not null default 0,
   credit_count integer not null default 0,
   items_per_hour integer,
-  template_id text
+  template_id text,
+  -- Questions the supervisor asks at registration: [{ id, label, type, options?, required }].
+  questions jsonb not null default '[]'
 );
 
 create table templates (
@@ -76,6 +78,11 @@ create table registrations (
   cancelled_at timestamptz,
   late boolean not null default false,
   waived boolean not null default false,
+  -- Registration form. Personal: only the organisation's supervisors and the centre admin read these.
+  phone text,
+  faculty text,
+  consent_at timestamptz,
+  answers jsonb not null default '{}',
   primary key (activity_id, student_id)
 );
 
