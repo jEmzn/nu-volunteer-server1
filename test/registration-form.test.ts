@@ -474,12 +474,40 @@ describe('RH-11: the server decides the consent time and checks phone and facult
     expect(row).toMatchObject({ phone: null, faculty: null });
   });
 
-  it.each([['คณะเวทมนตร์ <script>'], ['คณะวิศวกรรม'], ['อื่นๆ'], ['<b>คณะวิศวกรรมศาสตร์</b>']])('refuses the faculty %p', (faculty) => refused({ faculty }, 'faculty'));
+  it.each([['คณะเวทมนตร์ <script>'], ['<b>คณะวิศวกรรมศาสตร์</b>'], ['คณะ>'], ['ก'], ['  ก  '], ['คณะ\nวิศว'], ['คณะ\tวิศว'], ['คณะ\u0000'], ['คณะ\u007f'], ['ก'.repeat(81)], [42]])(
+    'refuses the faculty %p',
+    (faculty) => refused({ faculty }, 'faculty'),
+  );
 
-  it.each([['คณะวิศวกรรมศาสตร์'], ['วิทยาลัยพลังงานทดแทนและสมาร์ทกริดเทคโนโลยี'], ['อื่น ๆ'], [' คณะนิติศาสตร์ ']])('accepts the faculty %p from the list', async (faculty) => {
+  it.each([['คณะวิศวกรรมศาสตร์'], ['วิทยาลัยพลังงานทดแทนและสมาร์ตกริดเทคโนโลยี'], [' คณะนิติศาสตร์ ']])('accepts the faculty %p from the list', async (faculty) => {
     const { res, row } = await register({ faculty });
     expect(res.status).toBe(200);
     expect(row.faculty).toBe(faculty.trim());
+  });
+
+  it.each([['บัณฑิตวิทยาลัย'], ['  กองกิจการนิสิต  '], ['คณะวิศวกรรม'], ['อื่นๆ'], ['ศศ'], ['ก'.repeat(80)], ['Faculty of Engineering']])(
+    'accepts the faculty %p typed by hand, trimmed',
+    async (faculty) => {
+      const { res, row } = await register({ faculty });
+      expect(res.status).toBe(200);
+      expect(row.faculty).toBe(faculty.trim());
+    },
+  );
+
+  it('keeps a typed faculty that starts like a formula, and the file shows it as text', async () => {
+    const owner = await sup(app);
+    const id = await newActivity(app, owner, later());
+    await api(app, await student(app)).post(`/activities/${id}/registrations`, { faculty: '=1+1' }).expect(200);
+    expect((await regRow(app, id, '65000001')).faculty).toBe('=1+1');
+    await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000001', name: 'สมชาย ใจดี', hours: 3, reason: 'ช่วยงาน' }).expect(200);
+    const res = await api(app, owner).get(`/activities/${id}/export?kind=sup`).buffer(true).parse((r: any, cb: any) => {
+      const parts: Buffer[] = [];
+      r.on('data', (d: Buffer) => parts.push(d));
+      r.on('end', () => cb(null, Buffer.concat(parts)));
+    }).expect(200);
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(res.body as any);
+    expect(wb.worksheets[0].getRow(2).getCell(5).value).toBe("'=1+1");
   });
 
   it('exports a row saved before these rules as it was', async () => {
