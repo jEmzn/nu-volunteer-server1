@@ -1,7 +1,7 @@
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { AddressInfo } from 'node:net';
 import { io, Socket } from 'socket.io-client';
-import { api, dbOf, newActivity, ORG_A, ORG_ADMIN, ORG_B, resetDb, startApp, student, sup } from './helpers';
+import { activityBody, api, dbOf, http, newActivity, ORG_A, ORG_ADMIN, ORG_B, resetDb, startApp, student, sup } from './helpers';
 
 let app: NestExpressApplication;
 beforeAll(async () => {
@@ -221,6 +221,12 @@ describe('templates', () => {
     expect((await api(app, owner).get(`/activities/${id}`).expect(200)).body.templateId).toBe(t.id);
   });
 
+  it('can drop their poster (C19)', async () => {
+    const owner = await sup(app);
+    const t = (await api(app, owner).post('/templates', { ...body, poster: './posters/blood.jpg' }).expect(201)).body;
+    expect((await api(app, owner).patch(`/templates/${t.id}`, { poster: '' }).expect(200)).body.poster).toBe('');
+  });
+
   it('check the poster and the fields', async () => {
     const owner = await sup(app);
     await api(app, owner).post('/templates', { ...body, poster: 'http://x.example/a.jpg' }).expect(400);
@@ -228,6 +234,89 @@ describe('templates', () => {
     expect((await api(app, owner).post('/templates', {}).expect(400)).body.error.fields).toEqual(['title', 'hours']);
     const t = (await api(app, owner).post('/templates', body).expect(201)).body;
     await api(app, owner).patch(`/templates/${t.id}`, { title: null }).expect(400);
+  });
+});
+
+describe('template posters (VB-27)', () => {
+  const body = { title: 'เทมเพลต', description: '', hours: 3, settings: {} };
+  const jpeg = (fill: number, size = 2000) => Buffer.alloc(size, fill);
+  const dataUrl = (b: Buffer) => `data:image/jpeg;base64,${b.toString('base64')}`;
+  const binary = (r: any) =>
+    r.buffer(true).parse((res: any, cb: any) => {
+      const parts: Buffer[] = [];
+      res.on('data', (d: Buffer) => parts.push(d));
+      res.on('end', () => cb(null, Buffer.concat(parts)));
+    });
+  const make = async (token: string, poster: string) => (await api(app, token).post('/templates', { ...body, poster }).expect(201)).body.id as string;
+  const urls = async (token: string) => {
+    const list = (await api(app, token).get('/templates?posters=url').expect(200)).body as { id: string; poster: string }[];
+    return Object.fromEntries(list.map((t) => [t.id, t.poster]));
+  };
+
+  it('come as URLs when the reader asks, and as images for a web that does not', async () => {
+    const owner = await sup(app);
+    const uploaded = await make(owner, dataUrl(jpeg(1)));
+    const bundled = await make(owner, './posters/blood.jpg');
+    const none = await make(owner, '');
+    const shown = await urls(owner);
+    expect(shown[uploaded]).toMatch(new RegExp(`^/templates/${uploaded}/poster\\?v=\\d+-[0-9a-f]{32}$`));
+    expect(shown[bundled]).toBe('./posters/blood.jpg');
+    expect(shown[none]).toBe('');
+    const old = (await api(app, owner).get('/templates').expect(200)).body as { id: string; poster: string }[];
+    expect(old.find((t) => t.id === uploaded)!.poster).toBe(dataUrl(jpeg(1)));
+  });
+
+  it('keep the list small however many there are', async () => {
+    const owner = await sup(app);
+    for (let i = 0; i < 5; i++) await make(owner, dataUrl(Buffer.alloc(300 * 1024, i + 1)));
+    const res = await api(app, owner).get('/templates?posters=url').expect(200);
+    expect(res.text.length).toBeLessThan(5 * 2000);
+  });
+
+  it('are served as the JPEG to an image tag, cacheable, and 404 without an upload', async () => {
+    const owner = await sup(app);
+    const image = jpeg(7);
+    const id = await make(owner, dataUrl(image));
+    const res = await binary(http(app).get((await urls(owner))[id]).expect(200));
+    expect(Buffer.compare(res.body, image)).toBe(0);
+    expect(res.headers['content-type']).toContain('image/jpeg');
+    expect(res.headers['cache-control']).toBe('public, max-age=86400');
+    await http(app).get(`/templates/${await make(owner, './posters/blood.jpg')}/poster`).expect(404);
+    await http(app).get('/templates/nope/poster').expect(404);
+  });
+
+  it('copy the image into an activity made from the template, as a path or a whole URL', async () => {
+    const owner = await sup(app);
+    const image = jpeg(5);
+    const id = await make(owner, dataUrl(image));
+    const url = (await urls(owner))[id];
+    for (const poster of [url, `https://api.example.test${url}`]) {
+      const activity = await newActivity(app, owner, { categoryKey: 'other', templateId: id, poster });
+      const shown = (await api(app).get(`/activities/${activity}`).expect(200)).body.poster as string;
+      expect(shown).toMatch(new RegExp(`^/activities/${activity}/poster\\?v=`));
+      expect(Buffer.compare((await binary(http(app).get(shown).expect(200))).body, image)).toBe(0);
+    }
+  });
+
+  it('refuse another organisation’s template image and an unknown template', async () => {
+    const owner = await sup(app);
+    const id = await make(owner, dataUrl(jpeg(5)));
+    const url = (await urls(owner))[id];
+    expect(url).toBeTruthy();
+    const other = await sup(app, ORG_B);
+    expect((await api(app, other).post('/activities', activityBody({ poster: url })).expect(400)).body.error.fields).toEqual(['poster']);
+    await api(app, owner).post('/activities', activityBody({ poster: '/templates/nope/poster?v=1-a' })).expect(400);
+  });
+
+  it('keep their image when saved back with their own URL, and copy another template’s', async () => {
+    const owner = await sup(app);
+    const image = jpeg(9);
+    const id = await make(owner, dataUrl(image));
+    const url = (await urls(owner))[id];
+    await api(app, owner).patch(`/templates/${id}`, { title: 'แก้ชื่อ', poster: `https://api.example.test${url}` }).expect(200);
+    expect((await urls(owner))[id]).toBe(url);
+    const copy = await make(owner, url);
+    expect(Buffer.compare((await binary(http(app).get((await urls(owner))[copy]).expect(200))).body, image)).toBe(0);
   });
 });
 

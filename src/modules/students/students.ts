@@ -38,7 +38,10 @@ export class StudentsService {
   async update(user: StudentUser, dto: UpdateStudentDto) {
     assertNotNull(dto as Record<string, unknown>, ['reminders', 'notify']);
     const row = await this.db.one(
-      `UPDATE students SET reminders = COALESCE($2, reminders), notify = COALESCE($3::jsonb, notify) WHERE id = $1 RETURNING *`,
+      // The settings are replaced whole, apart from the admin's mark on a shared id (item 23).
+      `UPDATE students SET reminders = COALESCE($2, reminders),
+         notify = COALESCE($3::jsonb || CASE WHEN notify ? 'idReview' THEN jsonb_build_object('idReview', notify -> 'idReview') ELSE '{}'::jsonb END, notify)
+       WHERE id = $1 RETURNING *`,
       [user.sub, dto.reminders ?? null, dto.notify ? JSON.stringify(dto.notify) : null],
     );
     if (!row) throw notFound('ไม่พบนิสิต');

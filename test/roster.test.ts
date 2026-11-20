@@ -61,6 +61,20 @@ describe('registering', () => {
     expect((await activityRow(app, id)).reg_count).toBe(1);
   });
 
+  it('refuses to cancel once the student has hours, and keeps the seat (VB-24)', async () => {
+    const s = await student(app);
+    const owner = await sup(app);
+    const id = await newActivity(app, owner, { start: Date.now() - HOUR, end: Date.now() + HOUR, capLimit: true, capacity: 1 });
+    await api(app, s).post(`/activities/${id}/registrations`).expect(200);
+    await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000001' }).expect(200);
+    const res = await api(app, s).delete(`/activities/${id}/registrations/me`).expect(409);
+    expect(res.body.error).toMatchObject({ code: 'CANCEL_HAS_CREDIT', message: 'ได้ชั่วโมงกิจกรรมนี้แล้ว ยกเลิกไม่ได้' });
+    expect(await regRow(app, id, '65000001')).toMatchObject({ cancelled_at: null, late: false });
+    expect((await activityRow(app, id)).reg_count).toBe(1);
+    const other = await student(app, '65000002', 'ข');
+    expect((await api(app, other).post(`/activities/${id}/registrations`).expect(200)).body.result).toBe('full');
+  });
+
   describe('when the activity is not open', () => {
     const refused = async (id: string, token: string, code: string) => {
       const res = await api(app, token).post(`/activities/${id}/registrations`).expect(409);
@@ -556,6 +570,37 @@ describe('editing hours', () => {
   });
 });
 
+describe('0 hours in an ordinary activity (VB-26)', () => {
+  let owner: string;
+  let id: string;
+  beforeEach(async () => {
+    owner = await sup(app);
+    id = await newActivity(app, owner);
+  });
+
+  it('is not counted when added at 0', async () => {
+    await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000001', name: 'ก', hours: 0, reason: 'ไม่ได้ทำงาน' }).expect(200);
+    expect((await activityRow(app, id)).credit_count).toBe(0);
+    await api(app, owner).delete(`/activities/${id}/credits/65000001`).expect(200);
+    expect((await activityRow(app, id)).credit_count).toBe(0);
+  });
+
+  it('leaves the count when edited to 0, and comes back when given hours again', async () => {
+    await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000001', name: 'ก' }).expect(200);
+    await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000002', name: 'ข' }).expect(200);
+    expect((await activityRow(app, id)).credit_count).toBe(2);
+    await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 0, reason: 'ไม่ได้ทำงาน' }).expect(200);
+    expect((await activityRow(app, id)).credit_count).toBe(1);
+    await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 0, reason: 'ไม่ได้ทำงานเลย' }).expect(200);
+    expect((await activityRow(app, id)).credit_count).toBe(1);
+    await api(app, owner).patch(`/activities/${id}/credits/65000001`, { hours: 6 }).expect(200);
+    expect((await activityRow(app, id)).credit_count).toBe(2);
+    await api(app, owner).patch(`/activities/${id}/credits/65000002`, { hours: 0, reason: 'กลับก่อน' }).expect(200);
+    await api(app, owner).delete(`/activities/${id}/credits/65000002`).expect(200);
+    expect((await activityRow(app, id)).credit_count).toBe(1);
+  });
+});
+
 describe('sharing the reason with the student', () => {
   let owner: string;
   let me: string;
@@ -656,6 +701,9 @@ describe('removing', () => {
     await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000002' }).expect(200);
     await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000003', name: 'ค' }).expect(200);
     expect((await activityRow(app, id)).reg_count).toBe(1);
+    // A walk-in with hours cannot cancel (VB-24); once the hours are taken back, it can.
+    await api(app, b).delete(`/activities/${id}/registrations/me`).expect(409);
+    await api(app, owner).delete(`/activities/${id}/credits/65000002`).expect(200);
     await api(app, b).delete(`/activities/${id}/registrations/me`).expect(200);
     await api(app, owner).delete(`/activities/${id}/registrations/65000003`).expect(200);
     expect((await activityRow(app, id)).reg_count).toBe(1);
@@ -995,7 +1043,7 @@ describe('Excel files', () => {
     expect(noShow.slice(6, 8)).toEqual([0, 'ไม่มา']);
   });
 
-  it('the centre file has 7 columns, earners only, by id', async () => {
+  it('the centre file has 8 columns, earners only, by id', async () => {
     const res = await download(api(app, admin).get(`/activities/${id}/export?kind=admin`).expect(200));
     expect(decodeURIComponent(res.headers['content-disposition'])).toContain("filename*=UTF-8''บันทึกชั่วโมง 20-11-2569 เก็บขยะริมน้ำ.xlsx");
     // A plain table, with its header kept in view and filters on (R22).
@@ -1005,8 +1053,8 @@ describe('Excel files', () => {
     expect(wb.worksheets[0].autoFilter).toBeTruthy();
     const rows = await read(res.body);
     expect(rows).toEqual([
-      ['รหัสนิสิต', 'ชื่อ', 'กิจกรรม', 'หน่วยงาน', 'หมวด', 'วันที่', 'ชั่วโมง'],
-      ['65000002', 'สมหญิง รักเรียน', 'เก็บขยะริมน้ำ', 'หน่วยงาน A', 'จัดสถานที่', '20 พ.ย. 2569', 3],
+      ['รหัสนิสิต', 'ชื่อ', 'กิจกรรม', 'หน่วยงาน', 'หมวด', 'วันที่', 'ชั่วโมง', 'สถานะ'],
+      ['65000002', 'สมหญิง รักเรียน', 'เก็บขยะริมน้ำ', 'หน่วยงาน A', 'จัดสถานที่', '20 พ.ย. 2569', 3, 'ได้ชั่วโมง'],
     ]);
   });
 

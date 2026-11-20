@@ -7,13 +7,11 @@ const ms = (v: Date | string | null | undefined) => (v ? new Date(v).getTime() :
 const opt = <T>(v: T | null | undefined) => v ?? undefined;
 const defined = <T extends object>(o: T): T => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
 
-export const toStudent = (r: Row) => ({
-  id: r.id,
-  name: r.name,
-  createdAt: ms(r.created_at) ?? 0,
-  reminders: r.reminders ?? [],
-  notify: r.notify ?? {},
-});
+export const toStudent = (r: Row) => {
+  // idReview is the admin's mark on a shared id (item 23), kept in the same column; not a setting.
+  const { idReview: _, ...notify } = r.notify ?? {};
+  return { id: r.id, name: r.name, createdAt: ms(r.created_at) ?? 0, reminders: r.reminders ?? [], notify };
+};
 
 /** A supervisor looks a student up to fill in the name, and has no business with their settings. */
 export const toStudentBrief = (r: Row) => ({ id: r.id, name: r.name, createdAt: ms(r.created_at) ?? 0 });

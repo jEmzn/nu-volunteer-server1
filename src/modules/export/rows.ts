@@ -1,13 +1,17 @@
 import { thDate, thTime, zonedParts } from '../../common/format';
 import type { Row } from '../../common/db.service';
+import { baseOf, type IdFlag } from '../ids/ids';
 
 /** The rows of both Excel files as pure data, so their columns and values can be tested without Excel. */
 
 /** A flat table, header in row 1: the activity's title, category and date repeat on every row, like the centre file. */
 export const SUP_COLUMNS = ['ลำดับ', 'รหัสนิสิต', 'ชื่อ', 'กิจกรรม', 'หมวด', 'วันที่', 'ชั่วโมง', 'สถานะ', 'เวลายืนยัน', 'ยืนยันโดย', 'หมายเหตุ'] as const;
 export const SUP_WIDTHS = [7, 12, 28, 40, 16, 14, 9, 12, 20, 18, 40];
-export const ADMIN_COLUMNS = ['รหัสนิสิต', 'ชื่อ', 'กิจกรรม', 'หน่วยงาน', 'หมวด', 'วันที่', 'ชั่วโมง'] as const;
-export const ADMIN_WIDTHS = [12, 28, 40, 30, 16, 14, 9];
+export const ADMIN_COLUMNS = ['รหัสนิสิต', 'ชื่อ', 'กิจกรรม', 'หน่วยงาน', 'หมวด', 'วันที่', 'ชั่วโมง', 'สถานะ'] as const;
+export const ADMIN_WIDTHS = [12, 28, 40, 30, 16, 14, 9, 14];
+
+/** Two names on one id (item 23): the row must not go into the university system until the admin checked it. */
+const ID_STATUS: Record<IdFlag, string> = { idconflict: 'รอตรวจรหัส', idpending: 'รอรหัสที่ถูก' };
 
 const CATEGORY_LABEL: Record<string, string> = { blood: 'บริจาคโลหิต', setup: 'จัดสถานที่', bottle: 'แลกขวด', other: 'อื่น ๆ' };
 export const categoryLabel = (key: string) => CATEGORY_LABEL[key] ?? CATEGORY_LABEL.other;
@@ -48,10 +52,12 @@ export function distanceText(m: number) {
 function status(activity: Row, reg: Row | undefined, c: Row | undefined, closed: boolean) {
   if (!c) return closed ? 'ไม่มา' : 'ยังไม่สแกน';
   if (activity.category_key === 'bottle') return Number(c.hours) > 0 ? 'ได้ชั่วโมง' : `ยังไม่ครบ ${activity.items_per_hour} ขวด`;
+  // Left at 0 by the supervisor: in the roster with the reason in the notes, but without hours (VB-26).
+  if (!(Number(c.hours) > 0)) return 'ไม่ได้ชั่วโมง';
   return reg?.walk_in ? 'walk-in' : 'ได้ชั่วโมง';
 }
 
-export function supRows(activity: Row, regs: Row[], credits: Row[], tz: string, now = Date.now()): (string | number | null)[][] {
+export function supRows(activity: Row, regs: Row[], credits: Row[], tz: string, now = Date.now(), idFlags = new Map<string, IdFlag>()): (string | number | null)[][] {
   const closed = rosterClosed(activity, now);
   const people = new Map<string, { id: string; name: string; reg?: Row; credit?: Row }>();
   for (const r of regs) if (!r.cancelled_at) people.set(r.student_id, { id: r.student_id, name: r.name, reg: r });
@@ -69,16 +75,17 @@ export function supRows(activity: Row, regs: Row[], credits: Row[], tz: string, 
       flags.includes('device') && 'ใช้เครื่องซ้ำ',
       flags.includes('offline') && 'ส่งภายหลัง',
     ].filter(Boolean);
+    const idFlag = idFlags.get(p.id);
     return [
       i + 1,
-      p.id,
+      baseOf(p.id),
       p.name,
       activity.title,
       categoryLabel(activity.category_key),
       thDate(time(activity.start_at), tz),
       // An empty cell, not 0, while they may still come.
       c ? Number(c.hours) : closed ? 0 : null,
-      status(activity, p.reg, c, closed),
+      idFlag && c ? ID_STATUS[idFlag] : status(activity, p.reg, c, closed),
       c ? confirmedAt(new Date(c.at).getTime(), tz) : '',
       !c ? '' : c.method === 'qr' ? 'สแกน QR' : (c.edited_by ?? 'ผู้ดูแล'),
       notes.join(', '),
@@ -87,11 +94,15 @@ export function supRows(activity: Row, regs: Row[], credits: Row[], tz: string, 
 }
 
 /** One row per person who earned hours, by student id. No-shows and people left at 0 hours are not listed. */
-export function adminRows(activity: Row, credits: Row[], tz: string): (string | number)[][] {
+export function adminRows(activity: Row, credits: Row[], tz: string, idFlags = new Map<string, IdFlag>()): (string | number)[][] {
   return credits
     .filter((c) => Number(c.hours) > 0)
     .sort((a, b) => a.student_id.localeCompare(b.student_id))
-    .map((c) => [c.student_id, c.name, activity.title, activity.org, categoryLabel(activity.category_key), thDate(activity.start_at.getTime(), tz), Number(c.hours)].map(safeCell));
+    .map((c) => {
+      const idFlag = idFlags.get(c.student_id);
+      const cells = [baseOf(c.student_id), c.name, activity.title, activity.org, categoryLabel(activity.category_key), thDate(activity.start_at.getTime(), tz), Number(c.hours)];
+      return [...cells, idFlag ? ID_STATUS[idFlag] : 'ได้ชั่วโมง'].map(safeCell);
+    });
 }
 
 const words = new Intl.Segmenter('th', { granularity: 'word' });

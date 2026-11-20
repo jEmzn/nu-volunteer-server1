@@ -2,7 +2,8 @@ import { CanActivate, createParamDecorator, ExecutionContext, Injectable, SetMet
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { ApiError, forbidden, rosterLocked } from './errors';
-import type { Row } from './db.service';
+import { DbService, type Row } from './db.service';
+import { sameName } from '../modules/ids/ids';
 
 export interface StudentUser {
   role: 'student';
@@ -36,9 +37,10 @@ export class AuthGuard implements CanActivate {
   constructor(
     private readonly jwt: JwtService,
     private readonly reflector: Reflector,
+    private readonly db: DbService,
   ) {}
 
-  canActivate(ctx: ExecutionContext): boolean {
+  async canActivate(ctx: ExecutionContext): Promise<boolean> {
     const targets = [ctx.getHandler(), ctx.getClass()];
     const isPublic = this.reflector.getAllAndOverride<boolean>('public', targets);
     const req = ctx.switchToHttp().getRequest();
@@ -53,6 +55,13 @@ export class AuthGuard implements CanActivate {
         if (!isPublic) throw new ApiError(401, 'UNAUTHENTICATED', 'กรุณาเข้าสู่ระบบใหม่');
       }
     }
+    // A student token names an account. After the centre admin fixed a shared id (item 23) that account may be gone, or
+    // its id may now belong to another name: the phone must sign in again instead of acting for someone else. Every
+    // other token passes, since nothing else changes a stored name.
+    if (user?.role === 'student' && !(await this.accountStands(user))) {
+      if (!isPublic) throw new ApiError(401, 'ID_CHANGED', 'เจ้าหน้าที่แก้รหัสนิสิตของคุณแล้ว เข้าสู่ระบบใหม่ด้วยรหัสของคุณ');
+      user = undefined;
+    }
     if (user) req.user = user;
     if (isPublic) return true;
     if (!user) throw new ApiError(401, 'UNAUTHENTICATED', 'กรุณาเข้าสู่ระบบ');
@@ -61,6 +70,12 @@ export class AuthGuard implements CanActivate {
     if (user.role === 'student' && roles.includes('student')) return true;
     if (user.role === 'sup' && (roles.includes('sup') || (roles.includes('admin') && user.admin))) return true;
     throw forbidden();
+  }
+
+  /** Spelling aside (title, spaces), the account in the token still exists under the name it was signed in with. */
+  private async accountStands(user: StudentUser) {
+    const row = await this.db.one('SELECT name FROM students WHERE id = $1', [user.sub]);
+    return !!row && sameName(row.name, user.name ?? '');
   }
 }
 
