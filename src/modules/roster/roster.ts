@@ -6,6 +6,7 @@ import { AppConfig } from '../../common/config';
 import { ACTIVITY_RULE_COLUMNS, DbService, lockActivity, Row } from '../../common/db.service';
 import { ApiError, forbidden, notFound, validation } from '../../common/errors';
 import { AnswerMap, checkAnswers } from '../../common/questions';
+import { Faculty, Phone } from '../../common/contact';
 import { Bool, Int, MAX_TIME_MS, Name, Str } from '../../common/fields';
 import { fmtHours } from '../../common/format';
 import { toCredit, toCreditForPeer, toOwnCredit, toRegistration, toRegistrationWithForm } from '../../common/mappers';
@@ -31,9 +32,9 @@ function assertOpenForRegistration(activity: Row) {
 
 /** The registration form. All of it is optional here so an older app, which sends nothing, still registers. */
 export class RegisterDto {
-  @Str({ optional: true, max: 20, matches: /^[0-9\- ]*$/ }) phone?: string | null;
-  @Str({ optional: true, max: 80 }) faculty?: string | null;
-  /** When the student ticked the PDPA consent, in ms. */
+  @Phone() phone?: string | null;
+  @Faculty() faculty?: string | null;
+  /** Sent when the student ticked the PDPA consent. Only its presence counts: the time stored is the server's (RH-11). */
   @Int({ optional: true, min: 0, max: MAX_TIME_MS }) consentAt?: number | null;
   @AnswerMap() answers?: Record<string, string> | null;
 }
@@ -102,10 +103,10 @@ export class RosterService {
       const answers = checkAnswers(questions, dto.answers);
       if (activity.cap_limit && activity.reg_count >= activity.capacity) return 'full' as const;
       await c.query(
-        `INSERT INTO registrations (activity_id, student_id, name, phone, faculty, consent_at, answers) VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `INSERT INTO registrations (activity_id, student_id, name, phone, faculty, consent_at, answers) VALUES ($1, $2, $3, $4, $5, CASE WHEN $6::boolean THEN now() END, $7)
          ON CONFLICT (activity_id, student_id) DO UPDATE SET name = excluded.name, at = now(), cancelled_at = null, walk_in = false,
            phone = excluded.phone, faculty = excluded.faculty, consent_at = excluded.consent_at, answers = excluded.answers`,
-        [activityId, user.sub, user.name, dto.phone || null, dto.faculty || null, dto.consentAt == null ? null : new Date(dto.consentAt), JSON.stringify(answers)],
+        [activityId, user.sub, user.name, dto.phone || null, dto.faculty || null, dto.consentAt != null, JSON.stringify(answers)],
       );
       await c.query('UPDATE activities SET reg_count = reg_count + 1 WHERE id = $1', [activityId]);
       await c.query(`INSERT INTO notices (student_id, kind, title, body, activity_id) VALUES ($1, 'registered', 'ลงทะเบียนสำเร็จ', $2, $3)`, [user.sub, activity.title, activityId]);
@@ -374,7 +375,7 @@ export class RosterController {
   @Post('registrations')
   @HttpCode(200)
   @Roles('student')
-  @ApiOperation({ summary: 'ลงทะเบียน คืน result: ok, full หรือ already; ส่ง phone, faculty, consentAt, answers ได้ (ไม่บังคับ; ข้อ required ของกิจกรรมต้องตอบ ไม่ครบได้ 400 VALIDATION); 409 ถ้ากิจกรรมถูกซ่อน จบแล้ว ยังไม่เปิดรับ เคยยกเลิกช้า หรือสิทธิ์หมด' })
+  @ApiOperation({ summary: 'ลงทะเบียน คืน result: ok, full หรือ already; ส่ง phone, faculty, consentAt, answers ได้ (ไม่บังคับ; phone 9-10 หลักขึ้นต้น 0 เก็บเป็นตัวเลขล้วน, faculty ต้องอยู่ในรายการ, consentAt บอกว่ายินยอม เวลาที่เก็บเป็นของ server; ข้อ required ของกิจกรรมต้องตอบ ไม่ครบได้ 400 VALIDATION); 409 ถ้ากิจกรรมถูกซ่อน จบแล้ว ยังไม่เปิดรับ เคยยกเลิกช้า หรือสิทธิ์หมด' })
   register(@CurrentUser() user: StudentUser, @Param('id') id: string, @Body() dto: RegisterDto) {
     return this.roster.register(user, id, dto ?? {});
   }

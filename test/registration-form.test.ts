@@ -118,8 +118,9 @@ describe('registering with the form', () => {
     const id = await newActivity(app, await sup(app), withQuestions());
     await api(app, s).post(`/activities/${id}/registrations`, FORM).expect(200);
     const row = await regRow(app, id, '65000001');
-    expect(row).toMatchObject({ phone: '081-234 5678', faculty: 'คณะวิศวกรรมศาสตร์', answers: { q1: 'ปี 2', q2: 'ไม่มี' } });
-    expect(row.consent_at.getTime()).toBe(1_700_000_000_000);
+    // The phone keeps only its digits, and the consent time is the server's, not the one sent (RH-11).
+    expect(row).toMatchObject({ phone: '0812345678', faculty: 'คณะวิศวกรรมศาสตร์', answers: { q1: 'ปี 2', q2: 'ไม่มี' } });
+    expect(row.consent_at.getTime()).toBeGreaterThan(1_700_000_000_000);
   });
 
   it('takes the new answers when registering again after a cancel', async () => {
@@ -136,7 +137,7 @@ describe('registering with the form', () => {
     const id = await newActivity(app, await sup(app), withQuestions());
     await api(app, s).post(`/activities/${id}/registrations`, FORM).expect(200);
     expect((await api(app, s).post(`/activities/${id}/registrations`, { ...FORM, phone: '0000000000' }).expect(200)).body.result).toBe('already');
-    expect((await regRow(app, id, '65000001')).phone).toBe('081-234 5678');
+    expect((await regRow(app, id, '65000001')).phone).toBe('0812345678');
   });
 
   describe('field rules', () => {
@@ -180,7 +181,7 @@ describe('registering with the form', () => {
       await api(app, s).post(`/activities/${id}/registrations`, { phone: null, faculty: null, consentAt: null, answers: { q1: 'ปี 1', q2: 'ก'.repeat(500) } }).expect(200);
       expect(await regRow(app, id, '65000001')).toMatchObject({ phone: null, faculty: null, consent_at: null });
       const t = await student(app, '65000002', 'ข');
-      await api(app, t).post(`/activities/${id}/registrations`, { phone: '0'.repeat(20), faculty: 'ก'.repeat(80), answers: { q1: 'ปี 1' } }).expect(200);
+      await api(app, t).post(`/activities/${id}/registrations`, { phone: '(089) 999-9999', faculty: 'คณะเกษตรศาสตร์ ทรัพยากรธรรมชาติและสิ่งแวดล้อม', answers: { q1: 'ปี 1' } }).expect(200);
     });
   });
 
@@ -233,20 +234,20 @@ describe('who gets the personal answers', () => {
   it('the owning organisation sees them in the list and for one student', async () => {
     const { owner, id } = await setup();
     const list = (await api(app, owner).get(`/activities/${id}/registrations`).expect(200)).body;
-    expect(list.find((r: { studentId: string }) => r.studentId === '65000001')).toMatchObject({ phone: '081-234 5678', faculty: 'คณะวิศวกรรมศาสตร์', consentAt: 1_700_000_000_000, answers: { q1: 'ปี 2', q2: 'ไม่มี' } });
+    expect(list.find((r: { studentId: string }) => r.studentId === '65000001')).toMatchObject({ phone: '0812345678', faculty: 'คณะวิศวกรรมศาสตร์', consentAt: expect.any(Number), answers: { q1: 'ปี 2', q2: 'ไม่มี' } });
     const second = list.find((r: { studentId: string }) => r.studentId === '65000002');
     expect(second.answers).toEqual({ q1: 'ปี 1' });
     expect(second).not.toHaveProperty('phone');
     expect(second).not.toHaveProperty('consentAt');
     const one = (await api(app, owner).get(`/activities/${id}/registrations/65000001`).expect(200)).body;
-    expect(one).toMatchObject({ phone: '081-234 5678', answers: { q1: 'ปี 2' } });
+    expect(one).toMatchObject({ phone: '0812345678', answers: { q1: 'ปี 2' } });
   });
 
   it('the centre admin sees them too', async () => {
     const { id } = await setup();
     const admin = await sup(app, ORG_ADMIN, 'แอดมิน');
     const list = (await api(app, admin).get(`/activities/${id}/registrations`).expect(200)).body;
-    expect(list.find((r: { studentId: string }) => r.studentId === '65000001').phone).toBe('081-234 5678');
+    expect(list.find((r: { studentId: string }) => r.studentId === '65000001').phone).toBe('0812345678');
   });
 
   it('another organisation is refused', async () => {
@@ -273,7 +274,7 @@ describe('who gets the personal answers', () => {
       for (const url of urls) {
         const res = await api(app, token).get(url);
         const text = leaks(res.body);
-        expect(text).not.toContain('081-234 5678');
+        expect(text).not.toContain('0812345678');
         expect(text).not.toContain('คณะวิศวกรรมศาสตร์');
         expect(text).not.toContain('consentAt');
       }
@@ -284,7 +285,7 @@ describe('who gets the personal answers', () => {
     const { id } = await setup();
     const admin = await sup(app, ORG_ADMIN, 'แอดมิน');
     const res = await api(app, admin).patch(`/activities/${id}/registrations/65000001`, { waived: true });
-    expect(leaks(res.body)).not.toContain('081-234 5678');
+    expect(leaks(res.body)).not.toContain('0812345678');
   });
 });
 
@@ -324,7 +325,7 @@ describe('the Excel files carry the form', () => {
     expect(rows[0]).toHaveLength(16);
     const byId = Object.fromEntries(rows.slice(1).map((r) => [r[1], r]));
     // A formula typed as an answer is stopped like every other cell.
-    expect(byId['65000001'].slice(3, 8)).toEqual(['081-234 5678', 'คณะวิศวกรรมศาสตร์', 'ปี 2', "'=SUM(1)", 'M']);
+    expect(byId['65000001'].slice(3, 8)).toEqual(['0812345678', 'คณะวิศวกรรมศาสตร์', 'ปี 2', "'=SUM(1)", 'M']);
     // No phone or faculty and the walk-in with no form: blank, not "undefined" or "null".
     expect(byId['65000002'].slice(3, 8)).toEqual(['', '', 'ปี 1', '', '']);
     expect(byId['65000003'].slice(3, 8)).toEqual(['', '', '', '', '']);
@@ -336,7 +337,7 @@ describe('the Excel files carry the form', () => {
     await api(app, owner).patch(`/activities/${id}`, { questions: next }).expect(200);
     const rows = await file(owner, id, 'sup');
     expect(rows[0].slice(3, 8)).toEqual(['เบอร์โทร', 'คณะ', 'ชั้นปี', 'ผู้ติดตาม', 'กิจกรรม']);
-    expect(rows.slice(1).find((r) => r[1] === '65000001')!.slice(3, 7)).toEqual(['081-234 5678', 'คณะวิศวกรรมศาสตร์', 'ปี 2', '']);
+    expect(rows.slice(1).find((r) => r[1] === '65000001')!.slice(3, 7)).toEqual(['0812345678', 'คณะวิศวกรรมศาสตร์', 'ปี 2', '']);
     expect(JSON.stringify(rows)).not.toContain('SUM(1)');
   });
 
@@ -346,7 +347,7 @@ describe('the Excel files carry the form', () => {
     await api(app, await student(app)).post(`/activities/${id}/registrations`, FORM).expect(200);
     const rows = await file(owner, id, 'sup');
     expect(rows[0].slice(0, 6)).toEqual(['ลำดับ', 'รหัสนิสิต', 'ชื่อ', 'เบอร์โทร', 'คณะ', 'กิจกรรม']);
-    expect(rows[1].slice(3, 5)).toEqual(['081-234 5678', 'คณะวิศวกรรมศาสตร์']);
+    expect(rows[1].slice(3, 5)).toEqual(['0812345678', 'คณะวิศวกรรมศาสตร์']);
   });
 
   it('stops a formula in a question label', async () => {
@@ -362,7 +363,7 @@ describe('the Excel files carry the form', () => {
     expect(rows[0]).toEqual(['รหัสนิสิต', 'ชื่อ', 'เบอร์โทร', 'คณะ', 'ชั้นปี', 'โรคประจำตัว', 'ขนาดเสื้อ', 'กิจกรรม', 'หน่วยงาน', 'หมวด', 'วันที่', 'ชั่วโมง', 'สถานะ']);
     const byId = Object.fromEntries(rows.slice(1).map((r) => [r[0], r]));
     expect(Object.keys(byId).sort()).toEqual(['65000001', '65000002', '65000003']);
-    expect(byId['65000001'].slice(2, 7)).toEqual(['081-234 5678', 'คณะวิศวกรรมศาสตร์', 'ปี 2', "'=SUM(1)", 'M']);
+    expect(byId['65000001'].slice(2, 7)).toEqual(['0812345678', 'คณะวิศวกรรมศาสตร์', 'ปี 2', "'=SUM(1)", 'M']);
     expect(byId['65000002'].slice(2, 7)).toEqual(['', '', 'ปี 1', '', '']);
     expect(byId['65000003'].slice(2, 7)).toEqual(['', '', '', '', '']);
   });
@@ -418,5 +419,83 @@ describe('migration', () => {
     const owner = await sup(app);
     const id = await newActivity(app, owner, later());
     expect((await activityRow(app, id)).questions).toEqual([]);
+  });
+});
+
+describe('RH-11: the server decides the consent time and checks phone and faculty', () => {
+  const register = async (body: object, who = '65000001') => {
+    const s = await student(app, who, `นิสิต ${who}`);
+    const id = await newActivity(app, await sup(app), later());
+    const res = await api(app, s).post(`/activities/${id}/registrations`, body);
+    return { res, id, row: await regRow(app, id, who) };
+  };
+  const refused = async (body: object, field: string) => {
+    const { res, id, row } = await register(body);
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION');
+    expect(res.body.error.fields).toEqual([field]);
+    expect(row).toBeUndefined();
+    expect((await activityRow(app, id)).reg_count).toBe(0);
+  };
+
+  it('stores the server time as the consent time, whatever time the phone sends', async () => {
+    const before = Date.now();
+    const { res, row } = await register({ consentAt: Date.UTC(2027, 0, 1) });
+    expect(res.status).toBe(200);
+    expect(row.consent_at.getTime()).toBeGreaterThanOrEqual(before - 1000);
+    expect(row.consent_at.getTime()).toBeLessThanOrEqual(Date.now() + 1000);
+  });
+
+  it('stores no consent time when none is sent, as before', async () => {
+    expect((await register({})).row.consent_at).toBeNull();
+    expect((await register({ consentAt: null }, '65000002')).row.consent_at).toBeNull();
+  });
+
+  it.each([
+    ['0812223333', '0812223333'],
+    ['081-222-3333', '0812223333'],
+    ['081 222 3333', '0812223333'],
+    ['(081) 222-3333', '0812223333'],
+    ['055-123456', '055123456'],
+    [' 0812223333 ', '0812223333'],
+  ])('keeps only the digits of the phone %p', async (phone, stored) => {
+    const { res, row } = await register({ phone });
+    expect(res.status).toBe(200);
+    expect(row.phone).toBe(stored);
+  });
+
+  it.each([['123'], ['08122233'], ['08122233334'], ['1812223333'], ['+66812223333'], ['081.222.3333'], ['08x2223333'], ['---']])('refuses the phone %p', (phone) =>
+    refused({ phone }, 'phone'),
+  );
+
+  it('still takes an empty phone and faculty as nothing', async () => {
+    const { res, row } = await register({ phone: '', faculty: '' });
+    expect(res.status).toBe(200);
+    expect(row).toMatchObject({ phone: null, faculty: null });
+  });
+
+  it.each([['คณะเวทมนตร์ <script>'], ['คณะวิศวกรรม'], ['อื่นๆ'], ['<b>คณะวิศวกรรมศาสตร์</b>']])('refuses the faculty %p', (faculty) => refused({ faculty }, 'faculty'));
+
+  it.each([['คณะวิศวกรรมศาสตร์'], ['วิทยาลัยพลังงานทดแทนและสมาร์ทกริดเทคโนโลยี'], ['อื่น ๆ'], [' คณะนิติศาสตร์ ']])('accepts the faculty %p from the list', async (faculty) => {
+    const { res, row } = await register({ faculty });
+    expect(res.status).toBe(200);
+    expect(row.faculty).toBe(faculty.trim());
+  });
+
+  it('exports a row saved before these rules as it was', async () => {
+    const owner = await sup(app);
+    const id = await newActivity(app, owner, later());
+    await api(app, await student(app)).post(`/activities/${id}/registrations`, {}).expect(200);
+    await dbOf(app).query(`UPDATE registrations SET phone = '081-234 5678', faculty = 'คณะเวทมนตร์ <script>' WHERE activity_id = $1`, [id]);
+    await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000001', name: 'สมชาย ใจดี', hours: 3, reason: 'ช่วยงาน' }).expect(200);
+    const res = await api(app, owner).get(`/activities/${id}/export?kind=sup`).buffer(true).parse((r: any, cb: any) => {
+      const parts: Buffer[] = [];
+      r.on('data', (d: Buffer) => parts.push(d));
+      r.on('end', () => cb(null, Buffer.concat(parts)));
+    }).expect(200);
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(res.body as any);
+    const row = wb.worksheets[0].getRow(2);
+    expect([row.getCell(4).value, row.getCell(5).value]).toEqual(['081-234 5678', 'คณะเวทมนตร์ <script>']);
   });
 });
