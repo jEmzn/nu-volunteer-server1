@@ -1,5 +1,6 @@
 import { HttpException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
+import { FACULTIES } from '../src/common/contact';
 import { AllExceptionsFilter } from '../src/common/errors';
 import { cleanName, fmtHours, maskName, newId, thDate, thTime } from '../src/common/format';
 import { assertPoster, base64Bytes, MAX_POSTER_BYTES } from '../src/common/poster';
@@ -11,6 +12,15 @@ import { checkTime, makeDynamicToken, makeStaticToken, matchesMode, parseToken, 
 const SECRET = 'unit-secret-unit-secret-unit-secret';
 const NOW = 1_800_000_000_000;
 const activity = { start: NOW - 3_600_000, end: NOW + 3_600_000 };
+
+describe('faculty list', () => {
+  it('spells the college as the university does and has no "อื่น ๆ" entry, the same as the web', () => {
+    expect(FACULTIES).toContain('วิทยาลัยพลังงานทดแทนและสมาร์ตกริดเทคโนโลยี');
+    expect(FACULTIES.some((f) => f.includes('สมาร์ท'))).toBe(false);
+    expect(FACULTIES).not.toContain('อื่น ๆ');
+    expect(FACULTIES).toHaveLength(19);
+  });
+});
 
 describe('QR token', () => {
   it('signs and verifies, with the documented shape', () => {

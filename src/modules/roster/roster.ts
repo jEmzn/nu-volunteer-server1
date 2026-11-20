@@ -28,6 +28,8 @@ function assertOpenForRegistration(activity: Row) {
   if (activity.hidden) throw new ApiError(409, 'REG_HIDDEN', 'กิจกรรมนี้ถูกซ่อนอยู่ ลงทะเบียนไม่ได้');
   if (now > (activity.end_at as Date).getTime()) throw new ApiError(409, 'REG_ENDED', 'กิจกรรมนี้จบแล้ว ลงทะเบียนไม่ได้');
   if (activity.opens_at && now < (activity.opens_at as Date).getTime()) throw new ApiError(409, 'REG_NOT_OPEN', 'ยังไม่ถึงเวลาเปิดรับสมัคร');
+  // Closed before the end (RH-15): a new registration could not scan and would count as not coming at once.
+  if (activity.closed_at) throw new ApiError(409, 'REG_CLOSED', 'ผู้ดูแลปิดรายชื่อแล้ว ลงทะเบียนไม่ได้');
 }
 
 /** The registration form. All of it is optional here so an older app, which sends nothing, still registers. */
@@ -375,7 +377,7 @@ export class RosterController {
   @Post('registrations')
   @HttpCode(200)
   @Roles('student')
-  @ApiOperation({ summary: 'ลงทะเบียน คืน result: ok, full หรือ already; ส่ง phone, faculty, consentAt, answers ได้ (ไม่บังคับ; phone 9-10 หลักขึ้นต้น 0 เก็บเป็นตัวเลขล้วน, faculty ต้องอยู่ในรายการ, consentAt บอกว่ายินยอม เวลาที่เก็บเป็นของ server; ข้อ required ของกิจกรรมต้องตอบ ไม่ครบได้ 400 VALIDATION); 409 ถ้ากิจกรรมถูกซ่อน จบแล้ว ยังไม่เปิดรับ เคยยกเลิกช้า หรือสิทธิ์หมด' })
+  @ApiOperation({ summary: 'ลงทะเบียน คืน result: ok, full หรือ already; ส่ง phone, faculty, consentAt, answers ได้ (ไม่บังคับ; phone 9-10 หลักขึ้นต้น 0 เก็บเป็นตัวเลขล้วน, faculty ชื่อในรายการหรือพิมพ์เอง 2-80 ตัวอักษร ไม่มี < >, consentAt บอกว่ายินยอม เวลาที่เก็บเป็นของ server; ข้อ required ของกิจกรรมต้องตอบ ไม่ครบได้ 400 VALIDATION); 409 ถ้ากิจกรรมถูกซ่อน จบแล้ว ปิดรายชื่อแล้ว ยังไม่เปิดรับ เคยยกเลิกช้า หรือสิทธิ์หมด' })
   register(@CurrentUser() user: StudentUser, @Param('id') id: string, @Body() dto: RegisterDto) {
     return this.roster.register(user, id, dto ?? {});
   }

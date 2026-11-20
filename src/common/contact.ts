@@ -1,11 +1,12 @@
 import { applyDecorators } from '@nestjs/common';
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsIn, IsOptional, IsString, Matches } from 'class-validator';
+import { IsOptional, IsString, Matches } from 'class-validator';
 
 /**
- * Faculties and colleges of Naresuan University, the same list and spelling as the web's src/lib/faculties.ts.
- * The web offers no free text: "อื่น ๆ" is an entry of its own. Change both lists together.
+ * Faculties and colleges of Naresuan University, spelled as on the university's site, the same list as the web's
+ * src/lib/faculties.ts. The web suggests these while typing but takes any other name too, so the server checks the
+ * text's shape (FACULTY_TEXT), not the list. Change both lists together.
  */
 export const FACULTIES = [
   'คณะเกษตรศาสตร์ ทรัพยากรธรรมชาติและสิ่งแวดล้อม',
@@ -26,8 +27,7 @@ export const FACULTIES = [
   'คณะสาธารณสุขศาสตร์',
   'คณะโลจิสติกส์และดิจิทัลซัพพลายเชน',
   'วิทยาลัยนานาชาติ',
-  'วิทยาลัยพลังงานทดแทนและสมาร์ทกริดเทคโนโลยี',
-  'อื่น ๆ',
+  'วิทยาลัยพลังงานทดแทนและสมาร์ตกริดเทคโนโลยี',
 ] as const;
 
 /** A Thai phone number once dashes, spaces and brackets are gone: 0 then 8 or 9 digits. Empty means none was given. */
@@ -46,11 +46,18 @@ export const Phone = () =>
     Matches(PHONE),
   );
 
-/** The faculty on the registration form: one entry of FACULTIES, or empty for none. */
+/**
+ * A faculty after trimming: 2 to 80 characters with no angle brackets or control characters, or empty for none. A list
+ * name or one typed by hand (บัณฑิตวิทยาลัย, an office). Lengths count UTF-16 units, as the web's maxLength does.
+ */
+const FACULTY_TEXT = /^(?:[^<>\x00-\x1f\x7f]{2,80})?$/;
+
+/** The faculty on the registration form, trimmed. The Excel files stop a formula in it, as in every cell. */
 export const Faculty = () =>
   applyDecorators(
     IsOptional(),
-    ApiProperty({ type: String, required: false, nullable: true, enum: FACULTIES }),
+    ApiProperty({ type: String, required: false, nullable: true, pattern: FACULTY_TEXT.source, description: 'ชื่อในรายการคณะหรือพิมพ์เอง ตัดเว้นวรรคหัวท้ายแล้ว 2-80 ตัวอักษร ไม่มี < > และอักขระควบคุม' }),
     Transform(({ value }) => (typeof value === 'string' ? value.trim() : value)),
-    IsIn([...FACULTIES, '']),
+    IsString(),
+    Matches(FACULTY_TEXT),
   );

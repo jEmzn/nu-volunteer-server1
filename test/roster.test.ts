@@ -866,6 +866,39 @@ describe('roster life cycle', () => {
   });
 });
 
+describe('closing the roster before the end (RH-15)', () => {
+  it('stops scans and registrations, counts the registered who did not scan as not coming, and the closing job leaves it', async () => {
+    const owner = await sup(app);
+    // Running: started an hour ago, ends in an hour.
+    const id = await newActivity(app, owner, { walkIn: false });
+    const came = await student(app, '65000001', 'มา ทันเวลา');
+    const away = await student(app, '65000002', 'ไม่ได้ มา');
+    await api(app, came).post(`/activities/${id}/registrations`).expect(200);
+    await api(app, away).post(`/activities/${id}/registrations`).expect(200);
+    await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000001' }).expect(200);
+
+    expect((await api(app, owner).post(`/activities/${id}/close`).expect(200)).body.changed).toBe(true);
+    const row = await activityRow(app, id);
+    expect(row.closed_at.getTime()).toBeLessThan(row.end_at.getTime());
+
+    expect((await api(app, owner).post(`/activities/${id}/qr`, { la: 16.7466, lo: 100.1948, ac: 10 }).expect(409)).body.error.code).toBe('ROSTER_CLOSED');
+    const strikes = (await api(app, away).get('/students/65000002/strikes').expect(200)).body.strikes;
+    expect(strikes).toEqual([expect.objectContaining({ activityId: id, kind: 'noshow' })]);
+    expect((await api(app, came).get('/students/65000001/strikes').expect(200)).body.strikes).toEqual([]);
+
+    // Registering now would be a no-show at once.
+    const late = await student(app, '65000003', 'มา ทีหลัง');
+    const res = await api(app, late).post(`/activities/${id}/registrations`).expect(409);
+    expect(res.body.error).toMatchObject({ code: 'REG_CLOSED', message: 'ผู้ดูแลปิดรายชื่อแล้ว ลงทะเบียนไม่ได้' });
+    expect(await regRow(app, id, '65000003')).toBeUndefined();
+
+    expect(await app.get(SchedulerService).closeOverdueRosters()).toBe(0);
+    expect((await activityRow(app, id)).closed_at).toEqual(row.closed_at);
+    // Adding by hand stays open until the roster is sent.
+    await api(app, owner).post(`/activities/${id}/credits`, { studentId: '65000002' }).expect(200);
+  });
+});
+
 describe('the closing job', () => {
   it('closes rosters 24 hours past the end at that time, and leaves the rest', async () => {
     const owner = await sup(app);
